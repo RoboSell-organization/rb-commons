@@ -3,22 +3,22 @@ from typing import Optional
 from pydantic_settings import BaseSettings
 
 class CommonConfigs(BaseSettings):
-    service_name: str = None
-    service_port: int = None
-    service_id: str = None
-    service_hostname: str = '127.0.0.1'
-    service_host: str = None
+    service_name: Optional[str] = None
+    service_port: Optional[int] = None
+    service_id: Optional[str] = None
+    service_hostname: Optional[str] = '127.0.0.1'
+    service_host: Optional[str] = None
 
-    consul_host: str = '127.0.0.1'
-    consul_port: int = 8888
+    consul_host: Optional[str] = '127.0.0.1'
+    consul_port: Optional[int] = 8888
 
 #     db
-    POSTGRES_HOST: str = None
-    POSTGRES_USER: str = None
-    POSTGRES_PORT: int = None
-    POSTGRES_PASSWORD: str = None
-    POSTGRES_DB: str = None
-    DB_ALEMBIC_URL: str = None
+    POSTGRES_HOST: Optional[str] = None
+    POSTGRES_USER: Optional[str] = None
+    POSTGRES_PORT: Optional[int] = None
+    POSTGRES_PASSWORD: Optional[str] = None
+    POSTGRES_DB: Optional[str] = None
+    DB_ALEMBIC_URL: Optional[str] = None
 
     @property
     def database_url(self) -> Optional[str]:
