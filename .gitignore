@@ -16,7 +16,7 @@ payme-sample/
 .cache
 .coverage
 .coverage.*
-.idea
+.idea/
 .installed.cfg
 .noseids
 .tox
