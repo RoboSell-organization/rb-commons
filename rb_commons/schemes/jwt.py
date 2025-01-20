@@ -1,6 +1,7 @@
 import uuid
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 
 class UserRole(str, Enum):
     ADMIN = "admin"
@@ -8,6 +9,6 @@ class UserRole(str, Enum):
     GUEST = "guest"
 
 class Claims(BaseModel):
-    user_id: str = None
-    user_role: UserRole = UserRole.GUEST
-    shop_id: uuid.UUID = None
+    user_id: str = Field(None, alias="x-user-id")
+    user_role: UserRole = Field(UserRole.GUEST, alias="x-user-role")
+    shop_id: uuid.UUID = Field(None, alias="x-shop-id")
