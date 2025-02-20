@@ -42,3 +42,4 @@ virtualenv.py
 .install-deps
 .develop
 .idea/
+.idea/**

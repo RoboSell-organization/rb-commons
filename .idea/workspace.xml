@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="3a86916d-437f-42d4-b341-e07c66b35f5b" name="Changes" comment="feat: added dependency of claims dep">
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/rb-commons.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/setup.py" beforeDir="false" afterPath="$PROJECT_DIR$/setup.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 0
+}</component>
+  <component name="ProjectId" id="2rA0qSocb95Qru5Pvv6jeMvTvPG" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "main",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-822845ee3bb5-JavaScript-PY-243.23654.177" />
+        <option value="bundled-python-sdk-91d3a02ef49d-43b77aa2d136-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-243.23654.177" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="3a86916d-437f-42d4-b341-e07c66b35f5b" name="Changes" comment="" />
+      <created>1735986762683</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1735986762683</updated>
+      <workItem from="1735986765997" duration="218000" />
+      <workItem from="1735986989516" duration="2973000" />
+      <workItem from="1736261076945" duration="593000" />
+      <workItem from="1736348054270" duration="592000" />
+      <workItem from="1736504988163" duration="583000" />
+      <workItem from="1737368317042" duration="7066000" />
+      <workItem from="1737446236122" duration="612000" />
+      <workItem from="1739009564269" duration="2541000" />
+      <workItem from="1739094933745" duration="11000" />
+      <workItem from="1739164435153" duration="717000" />
+      <workItem from="1739281128931" duration="602000" />
+      <workItem from="1739964865250" duration="968000" />
+      <workItem from="1740033871954" duration="1779000" />
+    </task>
+    <task id="LOCAL-00001" summary="added gitignore">
+      <option name="closed" value="true" />
+      <created>1735986816731</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1735986816731</updated>
+    </task>
+    <task id="LOCAL-00002" summary="added project layout and orm">
+      <option name="closed" value="true" />
+      <created>1735987514531</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1735987514531</updated>
+    </task>
+    <task id="LOCAL-00003" summary="changed version">
+      <option name="closed" value="true" />
+      <created>1735987764443</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1735987764443</updated>
+    </task>
+    <task id="LOCAL-00004" summary="feat: made non required configs">
+      <option name="closed" value="true" />
+      <created>1735989408614</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1735989408614</updated>
+    </task>
+    <task id="LOCAL-00005" summary="feat: fixed pydantic issue">
+      <option name="closed" value="true" />
+      <created>1735989835595</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1735989835595</updated>
+    </task>
+    <task id="LOCAL-00006" summary="feat: fixed pydantic issue">
+      <option name="closed" value="true" />
+      <created>1735989846356</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1735989846356</updated>
+    </task>
+    <task id="LOCAL-00007" summary="feat: added jwt claims">
+      <option name="closed" value="true" />
+      <created>1737373561497</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1737373561497</updated>
+    </task>
+    <task id="LOCAL-00008" summary="feat: added alias to claims fields">
+      <option name="closed" value="true" />
+      <created>1737375161196</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1737375161196</updated>
+    </task>
+    <task id="LOCAL-00009" summary="feat: added ignore to claims">
+      <option name="closed" value="true" />
+      <created>1737375433413</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1737375433413</updated>
+    </task>
+    <task id="LOCAL-00010" summary="fix: fixed claims">
+      <option name="closed" value="true" />
+      <created>1737375857057</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1737375857057</updated>
+    </task>
+    <task id="LOCAL-00011" summary="fix: fixed claims model">
+      <option name="closed" value="true" />
+      <created>1737377129173</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1737377129173</updated>
+    </task>
+    <task id="LOCAL-00012" summary="fix: fixed claims model">
+      <option name="closed" value="true" />
+      <created>1737377248759</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1737377248759</updated>
+    </task>
+    <task id="LOCAL-00013" summary="fix: fixed claims model">
+      <option name="closed" value="true" />
+      <created>1737377266770</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1737377266770</updated>
+    </task>
+    <task id="LOCAL-00014" summary="feat: added dependency injection">
+      <option name="closed" value="true" />
+      <created>1737379998604</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1737379998604</updated>
+    </task>
+    <task id="LOCAL-00015" summary="feat: added dependency of claims dep">
+      <option name="closed" value="true" />
+      <created>1737380199086</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1737380199086</updated>
+    </task>
+    <option name="localTasksCounter" value="16" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="added gitignore" />
+    <MESSAGE value="added project layout and orm" />
+    <MESSAGE value="changed version" />
+    <MESSAGE value="feat: made non required configs" />
+    <MESSAGE value="feat: fixed pydantic issue" />
+    <MESSAGE value="feat: added jwt claims" />
+    <MESSAGE value="feat: added alias to claims fields" />
+    <MESSAGE value="feat: added ignore to claims" />
+    <MESSAGE value="fix: fixed claims" />
+    <MESSAGE value="fix: fixed claims model" />
+    <MESSAGE value="feat: added dependency injection" />
+    <MESSAGE value="feat: added dependency of claims dep" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat: added dependency of claims dep" />
+  </component>
+</project>

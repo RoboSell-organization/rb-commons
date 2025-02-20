@@ -5,13 +5,13 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="rb-commons",
-    version="0.1.11",
+    version="0.1.12",
     author="Abdulvoris",
     author_email="erkinovabdulvoris101@gmail.com",
     description="Commons of project and simplified orm based on sqlalchemy.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Abdulvoris101/rb-commons",  # Replace with your repo URL
+    url="https://github.com/RoboSell-organization/rb-commons",  # Replace with your repo URL
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
