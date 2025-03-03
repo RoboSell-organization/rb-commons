@@ -21,7 +21,7 @@ class Claims(BaseModel):
     def from_headers(cls, headers: dict) -> 'Claims':
         raw_claims = {
             "x-user-id": headers.get("x-user-id"),
-            "x-user-role": headers.get("x-user-role"),
+            "x-user-role": headers.get("x-user-role", "admin"),
             "x-shop-id": headers.get("x-shop-id")
         }
 
