@@ -1,5 +1,5 @@
+from typing import Annotated
 from fastapi import Depends
-
 from rb_commons.configs.injections import get_claims
 from rb_commons.http.exceptions import ForbiddenException
 from rb_commons.schemes.jwt import Claims, UserRole
@@ -22,3 +22,7 @@ class IsAdmin(BasePermission):
 class IsCustomer(BasePermission):
     def has_permission(self, claims: Claims) -> bool:
         return claims.user_role == UserRole.CUSTOMER
+
+
+IsAdminDep = Annotated[IsAdmin, Depends(IsAdmin())]
+IsCustomerDep = Annotated[IsCustomer, Depends(IsCustomer())]
