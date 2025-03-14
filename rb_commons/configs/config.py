@@ -20,6 +20,10 @@ class CommonConfigs(BaseSettings):
     POSTGRES_DB: Optional[str] = None
     DB_ALEMBIC_URL: Optional[str] = None
 
+    DIGITALOCEAN_STORAGE_BUCKET_NAME: Optional[str] = None
+    DIGITALOCEAN_S3_ENDPOINT_URL: Optional[str] = None
+
+
     @property
     def database_url(self) -> Optional[str]:
         """Construct the database URL if all required fields are present."""
