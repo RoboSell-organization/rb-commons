@@ -35,7 +35,7 @@ class BaseManager(Generic[ModelType]):
 
         return instance
 
-    async def filter(self, **kwargs) -> 'BaseManager[ModelType]':
+    def filter(self, **kwargs) -> 'BaseManager[ModelType]':
         """
            Filter objects based on conditions
        """
