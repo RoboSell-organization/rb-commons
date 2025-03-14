@@ -67,7 +67,7 @@ class BaseManager(Generic[ModelType]):
             delete_stmt = delete(self.model).filter_by(**filters)
             result = await self.session.execute(delete_stmt)
             await self.session.commit()
-            return result.rowcount() > 0
+            return result
         except NoResultFound:
             return False
         except SQLAlchemyError as e:
