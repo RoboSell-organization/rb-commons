@@ -10,6 +10,8 @@ class BasePermission:
         if not self.has_permission(claims):
             raise ForbiddenException(message=f"Access denied", status=401, code="0000")
 
+        return claims
+
     def has_permission(self, claims: Claims) -> bool:
         return False
 
@@ -24,5 +26,5 @@ class IsCustomer(BasePermission):
         return claims.user_role == UserRole.CUSTOMER
 
 
-IsAdminDep = Annotated[IsAdmin, Depends(IsAdmin())]
-IsCustomerDep = Annotated[IsCustomer, Depends(IsCustomer())]
+IsAdminDep = Annotated[Claims, Depends(IsAdmin())]
+IsCustomerDep = Annotated[Claims, Depends(IsCustomer())]
