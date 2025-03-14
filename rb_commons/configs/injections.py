@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from rb_commons.permissions import IsAdmin, IsCustomer
+from rb_commons.permissions.role_permissions import IsAdmin, IsCustomer
 from rb_commons.schemes.jwt import Claims
 from fastapi import Request, Depends
 

@@ -1,8 +1,11 @@
-from typing import TypeVar, Type, Generic, Optional, List, Dict
+import uuid
+from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union
 from sqlalchemy import select, delete, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base
+
+from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
@@ -12,27 +15,55 @@ class BaseManager(Generic[ModelType]):
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.data = None
+        self.filters = {}
 
-    async def get(self, **kwargs) -> Optional[ModelType]:
+    async def get(self, pk: Union[str, int, uuid.UUID]) -> Optional[ModelType]:
         """
            get object based on conditions
        """
-        query = select(self.model).filter_by(**kwargs)
+        query = select(self.model).filter_by(id=pk)
         result = await self.session.execute(query)
-        return result.scalar_one_or_none()
+        instance = result.scalar_one_or_none()
 
-    async def filter(self, **kwargs) -> List[ModelType]:
+        if instance is None:
+            raise NotFoundException(
+                message="Object does not exist",
+                status=404,
+                code="0001",
+            )
+
+        return instance
+
+    async def filter(self, **kwargs) -> 'BaseManager[ModelType]':
         """
            Filter objects based on conditions
        """
-        query = select(self.model).filter_by(**kwargs)
+        self.filters.update(kwargs)
+        return self
+
+    async def all(self) -> List[ModelType]:
+        """Return all filtered results."""
+        query = select(self.model).filter_by(**self.filters)
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def first(self) -> Optional[ModelType]:
+        """Return the first matching object, or None."""
+        query = select(self.model).filter_by(**self.filters)
+        result = await self.session.execute(query)
+        return result.scalars().first()
+
+    async def count(self) -> int:
+        """Return the count of matching records."""
+        query = select(self.model).filter_by(**self.filters)
+        result = await self.session.execute(query)
+        return len(result.scalars().all())
 
     async def create(self, **kwargs) -> ModelType:
         """
                Create a new object
-       """
+        """
         obj = self.model(**kwargs)
 
         try:
@@ -52,7 +83,7 @@ class BaseManager(Generic[ModelType]):
             raise InternalException(f"Unexpected error during creation: {str(e)}") from e
 
 
-    async def delete(self, id: Optional[int] = None, **filters) -> bool | None:
+    async def delete(self, id: Optional[int] = None, **filters):
         """
         Delete object(s) with flexible filtering options
 

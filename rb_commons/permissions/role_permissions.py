@@ -1,7 +1,7 @@
 from fastapi import Depends
 
 from rb_commons.configs.injections import get_claims
-from rb_commons.permissions.http_exceptions import ForbiddenException
+from rb_commons.http.exceptions import ForbiddenException
 from rb_commons.schemes.jwt import Claims, UserRole
 
 
