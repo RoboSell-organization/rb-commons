@@ -1,4 +1,6 @@
 from typing import Annotated
+
+from rb_commons.permissions import IsAdmin, IsCustomer
 from rb_commons.schemes.jwt import Claims
 from fastapi import Request, Depends
 
@@ -7,3 +9,5 @@ async def get_claims(request: Request) -> Claims:
     return Claims.from_headers(dict(request.headers))
 
 ClaimsDep = Annotated[Claims, Depends(get_claims)]
+IsAdminDep = Annotated[IsAdmin, Depends(IsAdmin())]
+IsCustomerDep = Annotated[IsCustomer, Depends(IsCustomer())]
