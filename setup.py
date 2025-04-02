@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="rb-commons",
-    version="0.1.23",
+    version="0.1.24",
     author="Abdulvoris",
     author_email="erkinovabdulvoris101@gmail.com",
     description="Commons of project and simplified orm based on sqlalchemy.",
@@ -22,7 +22,7 @@ setup(
     install_requires=[
         "annotated-types==0.7.0",
         "greenlet==3.1.1",
-        "pydantic==2.10.4",
+        "pydantic>=1.7.4,<3.0.0",
         "PyJWT==2.10.1",
         "python-dotenv==1.0.1",
         "SQLAlchemy==2.0.36",
