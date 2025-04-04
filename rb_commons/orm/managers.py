@@ -1,6 +1,6 @@
 import uuid
 from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union
-from sqlalchemy import select, delete, update, and_
+from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, InstrumentedAttribute
@@ -10,6 +10,21 @@ from rb_commons.orm.exceptions import DatabaseException, InternalException
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
 
+def with_transaction_error_handling(func):
+    async def wrapper(self, *args, **kwargs):
+        try:
+            return await func(self, *args, **kwargs)
+        except IntegrityError as e:
+            await self.session.rollback()
+            raise InternalException(f"Constraint violation: {str(e)}") from e
+        except SQLAlchemyError as e:
+            await self.session.rollback()
+            raise DatabaseException(f"Database error: {str(e)}") from e
+        except Exception as e:
+            await self.session.rollback()
+            raise InternalException(f"Unexpected error: {str(e)}") from e
+    return wrapper
+
 class BaseManager(Generic[ModelType]):
     model: Type[ModelType]
 
@@ -18,6 +33,19 @@ class BaseManager(Generic[ModelType]):
         self.data = None
         self.filters = []
         self._filtered = False
+
+    async def _persist(self, instance: ModelType) -> Optional[ModelType]:
+        self.session.add(instance)
+        await self.session.flush()
+        return await self._smart_commit(instance)
+
+    async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
+        if not self.session.in_transaction():
+            await self.session.commit()
+
+        if instance:
+            await self.session.refresh(instance)
+            return instance
 
     async def get(self, pk: Union[str, int, uuid.UUID]) -> Optional[ModelType]:
         """
@@ -111,35 +139,24 @@ class BaseManager(Generic[ModelType]):
 
     async def count(self) -> int:
         """Return the count of matching records."""
+
         self._ensure_filtered()
-
-        query = select(self.model).filter(and_(*self.filters))
+        query = select(func.count()).select_from(self.model).filter(and_(*self.filters))
         result = await self.session.execute(query)
-        return len(result.scalars().all())
+        return result.scalar_one()
 
+    @with_transaction_error_handling
     async def create(self, **kwargs) -> ModelType:
         """
                Create a new object
         """
         obj = self.model(**kwargs)
 
-        try:
-            self.session.add(obj)
-            await self.session.flush()
-            await self.session.commit()
-            await self.session.refresh(obj)
-            return obj
-        except IntegrityError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Constraint violation: {str(e)}") from e
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Database error occurred: {str(e)}") from e
-        except Exception as e:
-            await self.session.rollback()
-            raise InternalException(f"Unexpected error during creation: {str(e)}") from e
+        self.session.add(obj)
+        await self.session.flush()
+        return await self._smart_commit(obj)
 
-
+    @with_transaction_error_handling
     async def delete(self):
         """
         Delete object(s) with flexible filtering options
@@ -155,27 +172,24 @@ class BaseManager(Generic[ModelType]):
             return result.rowcount
         except NoResultFound:
             return False
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Delete operation failed: {str(e)}") from e
 
+    @with_transaction_error_handling
     async def bulk_delete(self) -> int:
         """
-        Bulk delete with flexible filtering
+            Bulk delete with flexible filtering.
 
-        :return: Number of deleted records
+            Automatically commits if not inside a transaction.
+
+            :return: Number of deleted records
         """
         self._ensure_filtered()
 
-        try:
-            delete_stmt = delete(self.model).where(and_(*self.filters))
-            result = await self.session.execute(delete_stmt)
-            await self.session.commit()
-            return result.rowcount()
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Bulk delete failed: {str(e)}") from e
+        delete_stmt = delete(self.model).where(and_(*self.filters))
+        result = await self.session.execute(delete_stmt)
+        await self._smart_commit()
+        return result.rowcount  # ignore
 
+    @with_transaction_error_handling
     async def update_by_filters(self, filters: Dict, **update_fields) -> Optional[ModelType]:
         """
         Update object(s) with flexible filtering options
@@ -187,19 +201,13 @@ class BaseManager(Generic[ModelType]):
         if not update_fields:
             raise InternalException("No fields provided for update")
 
-        try:
-            update_stmt = update(self.model).filter_by(**filters).values(**update_fields)
-            await self.session.execute(update_stmt)
-            await self.session.commit()
-            updated_instance = await self.get(**filters)
-            return updated_instance
-        except IntegrityError as e:
-            await self.session.rollback()
-            raise InternalException(f"Constraint violation: {str(e)}") from e
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Update operation failed: {str(e)}") from e
+        update_stmt = update(self.model).filter_by(**filters).values(**update_fields)
+        await self.session.execute(update_stmt)
+        await self.session.commit()
+        updated_instance = await self.get(**filters)
+        return updated_instance
 
+    @with_transaction_error_handling
     async def update(self, instance: ModelType, **update_fields) -> Optional[ModelType]:
         """
         Update an existing database instance with new fields
@@ -208,32 +216,23 @@ class BaseManager(Generic[ModelType]):
         :param update_fields: Keyword arguments of fields to update
         :return: The updated instance
 
-        :raises ValueError: If no update fields are provided
-        :raises RuntimeError: For database-related errors
+        :raises InternalException: If integrity violation
+        :raises DatabaseException: For database-related errors
         """
         # Validate update fields
         if not update_fields:
             raise InternalException("No fields provided for update")
 
-        try:
-            # Apply updates directly to the instance
-            for key, value in update_fields.items():
-                setattr(instance, key, value)
+        # Apply updates directly to the instance
+        for key, value in update_fields.items():
+            setattr(instance, key, value)
 
-            self.session.add(instance)
-            await self.session.commit()
-            await self.session.refresh(instance)
+        self.session.add(instance)
+        await self._smart_commit()
 
-            return instance
+        return instance
 
-        except IntegrityError as e:
-            await self.session.rollback()
-            raise InternalException(f"Constraint violation: {str(e)}") from e
-
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Update operation failed: {str(e)}") from e
-
+    @with_transaction_error_handling
     async def save(self, instance: ModelType) -> Optional[ModelType]:
         """
         Save instance
@@ -241,24 +240,37 @@ class BaseManager(Generic[ModelType]):
         :param instance: The database model instance to save
         :return: The saved instance
 
-        :raises ValueError: If no update fields are provided
-        :raises RuntimeError: For database-related errors
+        Automatically commits if not inside a transaction.
+
+        :raises InternalException: If integrity violation
+        :raises DatabaseException: For database-related errors
         """
-        try:
-            self.session.add(instance)
-            await self.session.commit()
-            await self.session.refresh(instance)
-            return instance
-
-        except IntegrityError as e:
-            await self.session.rollback()
-            raise InternalException(f"Constraint violation: {str(e)}") from e
-
-        except SQLAlchemyError as e:
-            await self.session.rollback()
-            raise DatabaseException(f"Update operation failed: {str(e)}") from e
-
+        self.session.add(instance)
+        await self.session.flush()
+        return await self._smart_commit(instance)
 
     async def is_exists(self, **kwargs) -> bool:
-        return await self.get(**kwargs) is not None
+        stmt = select(self.model).filter_by(**kwargs)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
+    @with_transaction_error_handling
+    async def bulk_save(self, instances: List[ModelType]) -> None:
+        """
+        Bulk save a list of instances into the database.
+
+        If inside a transaction, flushes only.
+        If not in a transaction, commits after flush.
+
+        :param instances: List of instances
+        :raises DatabaseException: If any database error occurs
+        :raises InternalException: If any unexpected error occurs
+        """
+        if not instances:
+            return
+
+        self.session.add_all(instances)
+        await self.session.flush()
+
+        if not self.session.in_transaction():
+            await self.session.commit()
