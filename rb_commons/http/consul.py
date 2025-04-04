@@ -9,7 +9,7 @@ class ServiceDiscovery:
         self.consul_client = consul.Consul(host=configs.consul_host, port=configs.consul_port)
         self.cache = aiocache.Cache(aiocache.SimpleMemoryCache)
 
-    async def get_service_instances(self, service_name: str) -> dict:
+    async def _get_service_instances(self, service_name: str) -> dict:
         """Get a healthy service instance from Consul"""
         index, services = self.consul_client.health.service(service_name, passing=True)
 
@@ -18,12 +18,12 @@ class ServiceDiscovery:
                                 detail="Service not available")
         return services
 
-    def select_instance(self, instances: list, request: Request) -> dict:
+    def _select_instance(self, instances: list, host: str) -> dict:
         """Select instance using consistent hashing"""
         if not instances:
             raise HTTPException(status_code=503, detail="No healthy instances")
 
-        key = request.client.host
+        key = host
         hash_value = hash(key)
         return instances[hash_value % len(instances)]
 
@@ -32,15 +32,13 @@ class ServiceDiscovery:
         cache_key = f"service:{service_name}"
         instances = await self.cache.get(cache_key)
         if not instances:
-            instances = await self.get_service_instances(service_name)
+            instances = await self._get_service_instances(service_name)
             if instances:
                 await self.cache.set(cache_key, instances, ttl=30)  # Cache for 30 seconds
         return instances
 
-    def build_target_url(self, instance: dict, path: str,
-                          request: Request) -> str:
+    def _build_instance_url(self, instance: dict) -> str:
         """Build target URL with proper path handling"""
         service_address = instance['Service']['Address'] or instance['Node']['Address']
         service_port = instance['Service']['Port']
-        target_path = request.url.path.replace(path, "", 1)
-        return f"http://{service_address}:{service_port}{path}{target_path}"
+        return f"http://{service_address}:{service_port}"
