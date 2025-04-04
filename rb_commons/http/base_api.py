@@ -73,6 +73,8 @@ class BaseAPI:
 
         except RequestException as e:
             raise BadRequestException(f"Request failed: {e}")
+        except BadRequestException as e:
+            raise BadRequestException(e.message)
         except (json.JSONDecodeError, ValueError) as e:
             raise InternalException(f"Failed to parse JSON: {e}")
         except Exception as e:
