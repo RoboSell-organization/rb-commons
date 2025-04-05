@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic_settings import BaseSettings
 
@@ -6,11 +6,11 @@ class CommonConfigs(BaseSettings):
     service_name: Optional[str] = None
     service_port: Optional[int] = None
     service_id: Optional[str] = None
-    service_hostname: Optional[str] = '127.0.0.1'
+    service_hostname: Optional[Any] = '127.0.0.1'
     service_host: Optional[str] = None
 
-    consul_host: Optional[str] = '127.0.0.1'
-    consul_port: Optional[int] = 8888
+    consul_host: Optional[Any] = '127.0.0.1'
+    consul_port: Optional[Any] = 8888
 
 #     db
     POSTGRES_HOST: Optional[str] = None
