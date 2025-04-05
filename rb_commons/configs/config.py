@@ -9,9 +9,6 @@ class CommonConfigs(BaseSettings):
     service_hostname: Optional[Any] = '127.0.0.1'
     service_host: Optional[str] = None
 
-    consul_host: Optional[Any] = '127.0.0.1'
-    consul_port: Optional[Any] = 8888
-
 #     db
     POSTGRES_HOST: Optional[str] = None
     POSTGRES_USER: Optional[str] = None
