@@ -1,6 +1,6 @@
 import uuid
 from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence
-from sqlalchemy import select, delete, update, and_, func, desc
+from sqlalchemy import select, delete, update, and_, func, desc, inspect
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload
@@ -298,3 +298,13 @@ class BaseManager(Generic[ModelType]):
 
         if not self.session.in_transaction():
             await self.session.commit()
+
+    def model_to_dict(self, instance: ModelType, exclude: set = None):
+        exclude = exclude or set()
+
+        return {
+            c.key: getattr(instance, c.key)
+            for c in inspect(instance).mapper.column_attrs
+            if c.key not in exclude
+        }
+
