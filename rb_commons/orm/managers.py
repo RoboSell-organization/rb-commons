@@ -1,9 +1,9 @@
 import uuid
-from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union
-from sqlalchemy import select, delete, update, and_, func
+from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence
+from sqlalchemy import select, delete, update, and_, func, desc
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import declarative_base, InstrumentedAttribute
+from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload
 
 from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
@@ -47,12 +47,17 @@ class BaseManager(Generic[ModelType]):
             await self.session.refresh(instance)
             return instance
 
-    async def get(self, pk: Union[str, int, uuid.UUID]) -> Optional[ModelType]:
+    async def get(self, pk: Union[str, int, uuid.UUID], load_relations: Sequence[str] = None) -> Optional[ModelType]:
         """
            get object based on conditions
        """
-        query = select(self.model).filter_by(id=pk)
-        result = await self.session.execute(query)
+        stmt = select(self.model).filter_by(id=pk)
+
+        if load_relations:
+            for rel in load_relations:
+                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+
+        result = await self.session.execute(stmt)
         instance = result.scalar_one_or_none()
 
         if instance is None:
@@ -129,12 +134,31 @@ class BaseManager(Generic[ModelType]):
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def first(self) -> Optional[ModelType]:
+    async def first(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
         """Return the first matching object, or None."""
         self._ensure_filtered()
 
-        query = select(self.model).filter(and_(*self.filters))
-        result = await self.session.execute(query)
+        stmt = select(self.model).filter(and_(*self.filters))
+
+        if load_relations:
+            for rel in load_relations:
+                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
+    async def last(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
+        """Return the last matching object, or None."""
+
+        self._ensure_filtered()
+
+        stmt = select(self.model).filter(and_(*self.filters)).order_by(desc(self.model.id))
+
+        if load_relations:
+            for rel in load_relations:
+                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+
+        result = await self.session.execute(stmt)
         return result.scalars().first()
 
     async def count(self) -> int:
