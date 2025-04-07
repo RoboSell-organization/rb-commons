@@ -5,8 +5,8 @@ from rb_commons.configs.config import configs
 
 
 class ServiceDiscovery:
-    def __init__(self) -> None:
-        self.consul_client = consul.Consul(host=configs.consul_host, port=configs.consul_port)
+    def __init__(self, host: str, port: int) -> None:
+        self.consul_client = consul.Consul(host=host, port=port)
         self.cache = aiocache.Cache(aiocache.SimpleMemoryCache)
 
     async def _get_service_instances(self, service_name: str) -> dict:
