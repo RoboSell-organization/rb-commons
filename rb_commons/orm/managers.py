@@ -34,11 +34,6 @@ class BaseManager(Generic[ModelType]):
         self.filters = []
         self._filtered = False
 
-    async def _persist(self, instance: ModelType) -> Optional[ModelType]:
-        self.session.add(instance)
-        await self.session.flush()
-        return await self._smart_commit(instance)
-
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
             await self.session.commit()
