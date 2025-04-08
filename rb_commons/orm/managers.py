@@ -181,19 +181,28 @@ class BaseManager(Generic[ModelType]):
         return await self._smart_commit(obj)
 
     @with_transaction_error_handling
-    async def delete(self):
+    async def delete(self, instance: ModelType) -> bool:
         """
         Delete object(s) with flexible filtering options
+            - If `instance` is provided, delete that single instance.
+            - If `instance` is not provided, delete according to self.filters.
 
+        :arg instance: Model instance to delete.
         :return: Number of deleted records or None
         """
+
+        if instance is not None:
+            await self.session.delete(instance)
+            await self.session.commit()
+            return True
+
         self._ensure_filtered()
 
         try:
             delete_stmt = delete(self.model).where(and_(*self.filters))
-            result = await self.session.execute(delete_stmt)
+            await self.session.execute(delete_stmt)
             await self.session.commit()
-            return result.rowcount
+            return True
         except NoResultFound:
             return False
 
