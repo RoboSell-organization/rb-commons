@@ -3,7 +3,7 @@ from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union,
 from sqlalchemy import select, delete, update, and_, func, desc, inspect
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload
+from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload, RelationshipProperty
 
 from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
@@ -74,7 +74,7 @@ class BaseManager(Generic[ModelType]):
         """
         if load_all_relations:
             mapper = inspect(self.model)
-            load_relations = [rel.key for rel in mapper.relationships()]
+            load_relations = [rel.key for rel in mapper.relationships]
 
             if load_relations:
                 for rel in load_relations:
@@ -103,26 +103,25 @@ class BaseManager(Generic[ModelType]):
         self._filtered = True
         self.filters = []
 
-        allowed_operators = {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"}
-
         for key, value in kwargs.items():
             parts = key.split("__")
 
-            if parts[-1] in allowed_operators:
-                operator = parts[-1]
-                field_path = parts[:-1]
-            else:
-                operator = "eq"
-                field_path = parts
+            operator = "eq"
+
+            if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"}:
+                operator = parts.pop()
 
             current_attr = self.model
-            for idx, field_name in enumerate(field_path):
-                current_attr = getattr(current_attr, field_name, None)
-                if current_attr is None:
-                    raise ValueError(f"Invalid filter field: {'.'.join(field_path)}")
 
-            if not isinstance(current_attr, InstrumentedAttribute):
-                raise ValueError(f"Invalid filter field: {'.'.join(field_path)}")
+            for field_name in parts:
+                attr_candidate = getattr(current_attr, field_name, None)
+                if attr_candidate is None:
+                    raise ValueError(f"Invalid filter field: {'.'.join(parts)}")
+
+                if hasattr(attr_candidate, "property") and isinstance(attr_candidate.property, RelationshipProperty):
+                    current_attr = attr_candidate.property.mapper.class_
+                else:
+                    current_attr = attr_candidate
 
             if operator == "eq":
                 # e.g., column == value
@@ -146,7 +145,7 @@ class BaseManager(Generic[ModelType]):
 
             elif operator == "in":
                 if not isinstance(value, list):
-                    raise ValueError(f"{'.'.join(field_path)}__in requires a list, got {type(value)}")
+                    raise ValueError(f"{'.'.join(parts)}__in requires a list, got {type(value)}")
                 self.filters.append(current_attr.in_(value))
 
             elif operator == "contains":
