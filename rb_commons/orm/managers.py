@@ -64,52 +64,94 @@ class BaseManager(Generic[ModelType]):
 
         return instance
 
+    def _apply_eager_loading(self, stmt, load_all_relations: bool = False):
+        """
+        Apply selectinload for eager loading relationships.
+
+        :param stmt: SQLAlchemy select statement
+        :param load_all_relations: If True, load all relationships
+        :return: Modified statement with eager loading applied
+        """
+        if load_all_relations:
+            mapper = inspect(self.model)
+            load_relations = [rel.key for rel in mapper.relationships()]
+
+            if load_relations:
+                for rel in load_relations:
+                    stmt = stmt.options(selectinload(getattr(self.model, rel)))
+
+        return stmt
+
     def filter(self, **kwargs) -> 'BaseManager[ModelType]':
         """
-           Apply filtering conditions dynamically.
+           Dynamically apply filters to the query.
 
-           Supports:
-           - `field__eq`: Equal (`=`)
-           - `field__ne`: Not Equal (`!=`)
-           - `field__gt`: Greater Than (`>`)
-           - `field__lt`: Less Than (`<`)
-           - `field__gte`: Greater Than or Equal (`>=`)
-           - `field__lte`: Less Than or Equal (`<=`)
-           - `field__in`: IN Query
-           - `field__contains`: LIKE Query
-       """
+           Supported operators:
+             - __eq       (e.g., field__eq=value) or just field=value
+             - __ne       (field__ne=value)
+             - __gt       (field__gt=value)
+             - __lt       (field__lt=value)
+             - __gte      (field__gte=value)
+             - __lte      (field__lte=value)
+             - __in       (field__in=[val1, val2, ...])
+             - __contains (field__contains='text')
+
+           Additionally supports nested paths, e.g.,
+             product__shop_id=None
+             product__shop__country='US'
+        """
         self._filtered = True
         self.filters = []
 
-        for key, value in kwargs.items():
-            if '__' in key:
-                field_name, operator = key.split('__', 1)
-            else:
-                field_name, operator = key, 'eq'
+        allowed_operators = {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"}
 
-            column = getattr(self.model, field_name, None)
-            if column is None or not isinstance(column, InstrumentedAttribute):
-                raise ValueError(f"Invalid filter field: {field_name}")
+        for key, value in kwargs.items():
+            parts = key.split("__")
+
+            if parts[-1] in allowed_operators:
+                operator = parts[-1]
+                field_path = parts[:-1]
+            else:
+                operator = "eq"
+                field_path = parts
+
+            current_attr = self.model
+            for idx, field_name in enumerate(field_path):
+                current_attr = getattr(current_attr, field_name, None)
+                if current_attr is None:
+                    raise ValueError(f"Invalid filter field: {'.'.join(field_path)}")
+
+            if not isinstance(current_attr, InstrumentedAttribute):
+                raise ValueError(f"Invalid filter field: {'.'.join(field_path)}")
 
             if operator == "eq":
-                self.filters.append(column == value)
-            elif operator == "ne":
-                self.filters.append(column != value)
-            elif operator == "gt":
-                self.filters.append(column > value)
-            elif operator == "lt":
-                self.filters.append(column < value)
-            elif operator == "gte":
-                self.filters.append(column >= value)
-            elif operator == "lte":
-                self.filters.append(column <= value)
-            elif operator == "in" and isinstance(value, list):
-                if not isinstance(value, list):
-                    raise ValueError(f"`{field_name}__in` requires a list, got {type(value)}")
+                # e.g., column == value
+                self.filters.append(current_attr == value)
 
-                self.filters.append(column.in_(value))
+            elif operator == "ne":
+                # e.g., column != value
+                self.filters.append(current_attr != value)
+
+            elif operator == "gt":
+                self.filters.append(current_attr > value)
+
+            elif operator == "lt":
+                self.filters.append(current_attr < value)
+
+            elif operator == "gte":
+                self.filters.append(current_attr >= value)
+
+            elif operator == "lte":
+                self.filters.append(current_attr <= value)
+
+            elif operator == "in":
+                if not isinstance(value, list):
+                    raise ValueError(f"{'.'.join(field_path)}__in requires a list, got {type(value)}")
+                self.filters.append(current_attr.in_(value))
+
             elif operator == "contains":
-                self.filters.append(column.ilike(f"%{value}%"))
+                # e.g., column ILIKE %value%
+                self.filters.append(current_attr.ilike(f"%{value}%"))
 
         return self
 
@@ -118,13 +160,11 @@ class BaseManager(Generic[ModelType]):
         if not self._filtered:
             raise RuntimeError("You must call `filter()` before using this method.")
 
-    async def all(self) -> List[ModelType]:
-        """Return all results based on applied filters."""
+    async def all(self, load_all_relations: bool = False) -> List[ModelType]:
         self._ensure_filtered()
 
-        query = select(self.model)
-        if self.filters:
-            query = query.filter(and_(*self.filters))
+        query = select(self.model).filter(and_(*self.filters))
+        query = self._apply_eager_loading(query, load_all_relations)
 
         result = await self.session.execute(query)
         return list(result.scalars().all())
