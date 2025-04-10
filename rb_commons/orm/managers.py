@@ -166,7 +166,13 @@ class BaseManager(Generic[ModelType]):
         query = self._apply_eager_loading(query, load_all_relations)
 
         result = await self.session.execute(query)
-        return list(result.scalars().all())
+        rows = result.scalars().all()
+
+        unique_by_pk = {}
+        for obj in rows:
+            unique_by_pk[obj.id] = obj
+
+        return list(unique_by_pk.values())
 
     async def first(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
         """Return the first matching object, or None."""
