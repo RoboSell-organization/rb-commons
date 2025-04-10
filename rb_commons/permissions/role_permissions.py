@@ -18,7 +18,7 @@ class BasePermission:
 
 class IsAdmin(BasePermission):
     def has_permission(self, claims: Claims) -> bool:
-        return claims.user_role == UserRole.ADMIN
+        return claims.user_role == UserRole.ADMIN and claims.shop_id is not None
 
 
 class IsCustomer(BasePermission):
