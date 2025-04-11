@@ -225,7 +225,7 @@ class BaseManager(Generic[ModelType]):
         return await self._smart_commit(obj)
 
     @with_transaction_error_handling
-    async def delete(self, instance: ModelType) -> bool:
+    async def delete(self, instance: ModelType = None) -> bool:
         """
         Delete object(s) with flexible filtering options
             - If `instance` is provided, delete that single instance.
