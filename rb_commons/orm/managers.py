@@ -65,22 +65,29 @@ class BaseManager(Generic[ModelType]):
         return instance
 
     def _apply_eager_loading(self, stmt, load_all_relations: bool = False):
-        """
-        Apply selectinload for eager loading relationships.
+        if not load_all_relations:
+            return stmt
 
-        :param stmt: SQLAlchemy select statement
-        :param load_all_relations: If True, load all relationships
-        :return: Modified statement with eager loading applied
-        """
-        if load_all_relations:
-            mapper = inspect(self.model)
-            load_relations = [rel.key for rel in mapper.relationships]
+        opts = []
+        visited = set()
 
-            if load_relations:
-                for rel in load_relations:
-                    stmt = stmt.options(selectinload(getattr(self.model, rel)))
+        def recurse(model, loader=None):
+            mapper = inspect(model)
+            if mapper in visited:
+                return
+            visited.add(mapper)
 
-        return stmt
+            for rel in mapper.relationships:
+                attr = getattr(model, rel.key)
+                if loader is None:
+                    this_loader = selectinload(attr)
+                else:
+                    this_loader = loader.selectinload(attr)
+                opts.append(this_loader)
+                recurse(rel.mapper.class_, this_loader)
+
+        recurse(self.model)
+        return stmt.options(*opts)
 
     def filter(self, **kwargs) -> 'BaseManager[ModelType]':
         """
@@ -162,16 +169,13 @@ class BaseManager(Generic[ModelType]):
     async def all(self, load_all_relations: bool = False) -> List[ModelType]:
         self._ensure_filtered()
 
-        query = select(self.model).filter(and_(*self.filters))
-        query = self._apply_eager_loading(query, load_all_relations)
+        stmt = select(self.model).filter(and_(*self.filters))
+        stmt = self._apply_eager_loading(stmt, load_all_relations)
 
-        result = await self.session.execute(query)
+        result = await self.session.execute(stmt)
         rows = result.scalars().all()
 
-        unique_by_pk = {}
-        for obj in rows:
-            unique_by_pk[obj.id] = obj
-
+        unique_by_pk = {obj.id: obj for obj in rows}
         return list(unique_by_pk.values())
 
     async def first(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
