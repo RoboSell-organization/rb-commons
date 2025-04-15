@@ -180,6 +180,7 @@ class BaseManager(Generic[ModelType]):
 
         if self._limit:
             stmt = stmt.limit(self._limit)
+            self._limit = None
 
         return await self._execute_query_and_unique_data(stmt, load_all_relations)
 
@@ -187,6 +188,13 @@ class BaseManager(Generic[ModelType]):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters)).limit(limit).offset(offset)
         return await self._execute_query_and_unique_data(stmt, load_all_relations)
+
+    def limit(self, value: int) -> 'BaseManager[ModelType]':
+        """
+        Set a limit on the number of results returned by queries like `all()` or `first()`.
+        """
+        self._limit = value
+        return self
 
     async def first(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
         """Return the first matching object, or None."""
