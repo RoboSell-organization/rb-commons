@@ -33,6 +33,7 @@ class BaseManager(Generic[ModelType]):
         self.data = None
         self.filters = []
         self._filtered = False
+        self._limit = None
 
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
@@ -176,6 +177,10 @@ class BaseManager(Generic[ModelType]):
     async def all(self, load_all_relations: bool = False) -> List[ModelType]:
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
+
+        if self._limit:
+            stmt = stmt.limit(self._limit)
+
         return await self._execute_query_and_unique_data(stmt, load_all_relations)
 
     async def paginate(self, limit: int = 10, offset: int = 0, load_all_relations: bool = False) -> List[ModelType]:
