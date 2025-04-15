@@ -387,6 +387,40 @@ class BaseManager(Generic[ModelType]):
         if not self.session.in_transaction():
             await self.session.commit()
 
+    @with_transaction_error_handling
+    def has_relation(self, relation_name: str) -> 'BaseManager[ModelType]':
+        """
+           Check if a relationship exists between models using an EXISTS subquery.
+           
+           :param relation_name Name of the relationship to check. Must be a valid relationship
+                   defined in the model.
+
+           :return BaseManager[ModelType]: Self instance for method chaining.
+
+           :raise DatabaseException: If there's an error constructing the subquery.
+           :raise InternalException: If there's an unexpected error in relationship handling.
+           
+           Notes:
+               - The relationship must be properly defined in the SQLAlchemy model
+               - Uses a non-correlated EXISTS subquery for better performance
+               - Silently continues if the relationship doesn't exist
+           """
+        # Get the relationship property
+        relationship = getattr(self.model, relation_name)
+
+        # Create subquery using select
+        subquery = (
+            select(1)
+            .select_from(relationship.property.mapper.class_)
+            .where(relationship.property.primaryjoin)
+            .exists()
+        )
+
+        # Add the exists condition to filters
+        self.filters.append(subquery)
+
+        return self
+
     def model_to_dict(self, instance: ModelType, exclude: set = None):
         exclude = exclude or set()
 
