@@ -166,17 +166,22 @@ class BaseManager(Generic[ModelType]):
         if not self._filtered:
             raise RuntimeError("You must call `filter()` before using this method.")
 
-    async def all(self, load_all_relations: bool = False) -> List[ModelType]:
-        self._ensure_filtered()
-
-        stmt = select(self.model).filter(and_(*self.filters))
+    async def _execute_query_and_unique_data(self, stmt, load_all_relations: bool) -> List[ModelType]:
         stmt = self._apply_eager_loading(stmt, load_all_relations)
-
         result = await self.session.execute(stmt)
         rows = result.scalars().all()
-
         unique_by_pk = {obj.id: obj for obj in rows}
         return list(unique_by_pk.values())
+
+    async def all(self, load_all_relations: bool = False) -> List[ModelType]:
+        self._ensure_filtered()
+        stmt = select(self.model).filter(and_(*self.filters))
+        return await self._execute_query_and_unique_data(stmt, load_all_relations)
+
+    async def paginate(self, limit: int = 10, offset: int = 0, load_all_relations: bool = False) -> List[ModelType]:
+        self._ensure_filtered()
+        stmt = select(self.model).filter(and_(*self.filters)).limit(limit).offset(offset)
+        return await self._execute_query_and_unique_data(stmt, load_all_relations)
 
     async def first(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
         """Return the first matching object, or None."""
