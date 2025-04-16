@@ -103,6 +103,7 @@ class BaseManager(Generic[ModelType]):
              - __lte      (field__lte=value)
              - __in       (field__in=[val1, val2, ...])
              - __contains (field__contains='text')
+             - __null     (field__null=True/False) - True for IS NULL, False for IS NOT NULL
 
            Additionally supports nested paths, e.g.,
              product__shop_id=None
@@ -116,7 +117,7 @@ class BaseManager(Generic[ModelType]):
 
             operator = "eq"
 
-            if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains"}:
+            if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "null"}:
                 operator = parts.pop()
 
             current_attr = self.model
@@ -159,6 +160,12 @@ class BaseManager(Generic[ModelType]):
             elif operator == "contains":
                 # e.g., column ILIKE %value%
                 self.filters.append(current_attr.ilike(f"%{value}%"))
+                
+            elif operator == "null":
+                if value is True:
+                    self.filters.append(current_attr.is_(None))
+                else:
+                    self.filters.append(current_attr.isnot(None))
 
         return self
 
