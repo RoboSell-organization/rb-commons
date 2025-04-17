@@ -268,6 +268,36 @@ class BaseManager(Generic[ModelType]):
         return await self._smart_commit(instance)
 
     @with_transaction_error_handling
+    async def lazy_save(self, instance: ModelType, load_relations: Sequence[str] = None) -> Optional[ModelType]:
+        self.session.add(instance)
+        await self.session.flush()
+        await self._smart_commit(instance)
+
+        if load_relations is None:
+            mapper = inspect(self.model)
+            load_relations = [rel.key for rel in mapper.relationships]
+
+        if not load_relations:
+            return instance
+
+        stmt = select(self.model).filter_by(id=instance.id)
+
+        for rel in load_relations:
+            stmt = stmt.options(selectinload(getattr(self.model, rel)))
+
+        result = await self.session.execute(stmt)
+        loaded_instance = result.scalar_one_or_none()
+
+        if loaded_instance is None:
+            raise NotFoundException(
+                message="Object saved but could not be retrieved with relationships",
+                status=404,
+                code="0001",
+            )
+
+        return loaded_instance
+
+    @with_transaction_error_handling
     async def update(self, instance: ModelType, **fields):
         if not fields:
             raise InternalException("No fields provided for update")
