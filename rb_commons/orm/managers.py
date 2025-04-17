@@ -5,7 +5,7 @@ from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union,
 from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload, RelationshipProperty
+from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload, RelationshipProperty, Load
 
 from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
@@ -134,6 +134,27 @@ class BaseManager(Generic[ModelType]):
             else (or_(*clauses) if q._operator == "OR" else and_(*clauses))
         )
         return ~combined if q.negated else combined
+
+    def _loader_from_path(self, path: str) -> Load:
+        """
+        Turn 'attributes.attribute.attribute_group' into
+        selectinload(Product.attributes)
+            .selectinload(Attribute.attribute)
+            .selectinload(ProductAttributeGroup.attribute_group)
+        """
+        parts = path.split(".")
+        current_model = self.model
+        loader = None
+
+        for segment in parts:
+            attr = getattr(current_model, segment, None)
+            if attr is None or not hasattr(attr, "property"):
+                raise ValueError(f"Invalid relationship path: {path!r}")
+
+            loader = selectinload(attr) if loader is None else loader.selectinload(attr)
+            current_model = attr.property.mapper.class_  # step down the graph
+
+        return loader
 
     def order_by(self, *columns: Any):
         """Collect ORDER BY clauses.
@@ -368,7 +389,11 @@ class BaseManager(Generic[ModelType]):
         stmt = select(self.model).filter_by(id=pk)
         if load_relations:
             for rel in load_relations:
-                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+                loader = (
+                    self._loader_from_path(rel) if "." in rel
+                    else selectinload(getattr(self.model, rel))
+                )
+                stmt = stmt.options(loader)
         result = await self.session.execute(stmt)
         instance = result.scalar_one_or_none()
         if instance is None:
