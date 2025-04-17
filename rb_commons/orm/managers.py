@@ -254,7 +254,6 @@ class BaseManager(Generic[ModelType]):
         self._ensure_filtered()
         query = select(func.count()).select_from(self.model).filter(and_(*self.filters))
         result = await self.session.execute(query)
-        self._reset_state()
         return result.scalar_one()
 
     async def paginate(self, limit=10, offset=0, load_all_relations=False):
