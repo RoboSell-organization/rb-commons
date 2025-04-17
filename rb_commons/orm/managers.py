@@ -75,6 +75,7 @@ class BaseManager(Generic[ModelType]):
         self.filters: List[Any] = []
         self._filtered: bool = False
         self._limit: Optional[int] = None
+        self._order_by: List[Any] = []
 
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
@@ -133,6 +134,22 @@ class BaseManager(Generic[ModelType]):
             else (or_(*clauses) if q._operator == "OR" else and_(*clauses))
         )
         return ~combined if q.negated else combined
+
+    def order_by(self, *columns: Any):
+        """Collect ORDER BY clauses.
+        """
+        for col in columns:
+            if isinstance(col, str):
+                descending = col.startswith("-")
+                field_name = col.lstrip("+-")
+                sa_col = getattr(self.model, field_name, None)
+                if sa_col is None:
+                    raise ValueError(f"Invalid order_by field '{field_name}' for {self.model.__name__}")
+                self._order_by.append(sa_col.desc() if descending else sa_col.asc())
+            else:
+                self._order_by.append(col)
+
+        return self
 
     def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
         """Add **AND** constraints (default behaviour).
@@ -198,6 +215,8 @@ class BaseManager(Generic[ModelType]):
         stmt = select(self.model)
         if self.filters:
             stmt = stmt.filter(and_(*self.filters))
+        if self._order_by:
+            stmt = stmt.order_by(*self._order_by)
         if self._limit:
             stmt = stmt.limit(self._limit)
         try:
@@ -208,6 +227,8 @@ class BaseManager(Generic[ModelType]):
     async def first(self, load_relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
+        if self._order_by:
+            stmt = stmt.order_by(*self._order_by)
         if load_relations:
             for rel in load_relations:
                 stmt = stmt.options(selectinload(getattr(self.model, rel)))
@@ -215,19 +236,19 @@ class BaseManager(Generic[ModelType]):
         self._reset_state()
         return result.scalars().first()
 
+
     async def last(self, load_relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
-        stmt = (
-            select(self.model)
-            .filter(and_(*self.filters))
-            .order_by(desc(self.model.id))
-        )
+        stmt = select(self.model).filter(and_(*self.filters))
+        order = self._order_by or [self.model.id.desc()]
+        stmt = stmt.order_by(*order[::-1])  # reverse for LAST
         if load_relations:
             for rel in load_relations:
                 stmt = stmt.options(selectinload(getattr(self.model, rel)))
         result = await self.session.execute(stmt)
         self._reset_state()
         return result.scalars().first()
+
 
     async def count(self) -> int:
         self._ensure_filtered()
@@ -236,19 +257,12 @@ class BaseManager(Generic[ModelType]):
         self._reset_state()
         return result.scalar_one()
 
-    async def paginate(
-            self,
-            limit: int = 10,
-            offset: int = 0,
-            load_all_relations: bool = False,
-    ):
+    async def paginate(self, limit=10, offset=0, load_all_relations=False):
         self._ensure_filtered()
-        stmt = (
-            select(self.model)
-            .filter(and_(*self.filters))
-            .limit(limit)
-            .offset(offset)
-        )
+        stmt = select(self.model).filter(and_(*self.filters))
+        if self._order_by:
+            stmt = stmt.order_by(*self._order_by)
+        stmt = stmt.limit(limit).offset(offset)
         try:
             return await self._execute_query(stmt, load_all_relations)
         finally:
