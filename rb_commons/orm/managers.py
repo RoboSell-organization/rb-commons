@@ -181,15 +181,27 @@ class BaseManager(Generic[ModelType]):
         unique_by_pk = {obj.id: obj for obj in rows}
         return list(unique_by_pk.values())
 
-    async def all(self, load_all_relations: bool = False) -> List[ModelType]:
-        self._ensure_filtered()
-        stmt = select(self.model).filter(and_(*self.filters))
+    async def all(self, load_all_relations: bool = False) -> List[ModelType] | None:
+        try:
+            stmt = select(self.model)
 
-        if self._limit:
-            stmt = stmt.limit(self._limit)
-            self._limit = None
+            if self._filtered:
+                stmt = stmt.filter(and_(*self.filters))
 
-        return await self._execute_query_and_unique_data(stmt, load_all_relations)
+            if self._limit:
+                stmt = stmt.limit(self._limit)
+
+            self._clear_query_state()
+
+            return await self._execute_query_and_unique_data(stmt, load_all_relations)
+        finally:
+            self._clear_query_state()
+
+    def _clear_query_state(self):
+        """Clear all query state after execution"""
+        self._filtered = False
+        self.filters = []
+        self._limit = None
 
     async def paginate(self, limit: int = 10, offset: int = 0, load_all_relations: bool = False) -> List[ModelType]:
         self._ensure_filtered()
