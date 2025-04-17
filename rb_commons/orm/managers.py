@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import uuid
-from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence
-from sqlalchemy import select, delete, update, and_, func, desc, inspect
+from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable
+from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload, RelationshipProperty
@@ -9,6 +11,46 @@ from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
+
+class Q:
+    """Boolean logic container that can be combined with `&`, `|`, and `~`."""
+
+    def __init__(self, **lookups: Any) -> None:
+        self.lookups: Dict[str, Any] = lookups
+        self.children: List[Q] = []
+        self._operator: str = "AND"
+        self.negated: bool = False
+
+    def _combine(self, other: "Q", operator: str) -> "Q":
+        combined = Q()
+        combined.children = [self, other]
+        combined._operator = operator
+        return combined
+
+    def __or__(self, other: "Q") -> "Q":
+        return self._combine(other, "OR")
+
+    def __and__(self, other: "Q") -> "Q":
+        return self._combine(other, "AND")
+
+    def __invert__(self) -> "Q":
+        clone = Q()
+        clone.lookups = self.lookups.copy()
+        clone.children = list(self.children)
+        clone._operator = self._operator
+        clone.negated = not self.negated
+        return clone
+
+    def __repr__(self) -> str:
+        if self.lookups:
+            base = f"Q({self.lookups})"
+        else:
+            base = "Q()"
+        if self.children:
+            base += f" {self._operator} {self.children}"
+        if self.negated:
+            base = f"NOT({base})"
+        return base
 
 def with_transaction_error_handling(func):
     async def wrapper(self, *args, **kwargs):
@@ -29,435 +71,293 @@ class BaseManager(Generic[ModelType]):
     model: Type[ModelType]
 
     def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.data = None
-        self.filters = []
-        self._filtered = False
-        self._limit = None
+        self.session: AsyncSession = session
+        self.filters: List[Any] = []
+        self._filtered: bool = False
+        self._limit: Optional[int] = None
 
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
             await self.session.commit()
-
-        if instance:
+        if instance is not None:
             await self.session.refresh(instance)
             return instance
+        return None
 
-    async def get(self, pk: Union[str, int, uuid.UUID], load_relations: Sequence[str] = None) -> Optional[ModelType]:
+    def _parse_lookup(self, lookup: str, value: Any):
+        parts = lookup.split("__")
+        operator = "eq"
+        if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "null"}:
+            operator = parts.pop()
+
+        current: Union[Type[ModelType], InstrumentedAttribute] = self.model
+        # walk relationships
+        for field in parts:
+            attr = getattr(current, field, None)
+            if attr is None:
+                raise ValueError(f"Invalid filter field: {'.'.join(parts)}")
+            if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
+                current = attr.property.mapper.class_
+            else:
+                current = attr
+
+        if operator == "eq":
+            return current == value
+        if operator == "ne":
+            return current != value
+        if operator == "gt":
+            return current > value
+        if operator == "lt":
+            return current < value
+        if operator == "gte":
+            return current >= value
+        if operator == "lte":
+            return current <= value
+        if operator == "in":
+            if not isinstance(value, (list, tuple, set)):
+                raise ValueError(f"{lookup}__in requires an iterable")
+            return current.in_(value)
+        if operator == "contains":
+            return current.ilike(f"%{value}%")
+        if operator == "null":
+            return current.is_(None) if value else current.isnot(None)
+        raise ValueError(f"Unsupported operator in lookup: {lookup}")
+
+    def _q_to_expr(self, q: Q):
+        clauses: List[Any] = [self._parse_lookup(k, v) for k, v in q.lookups.items()]
+        for child in q.children:
+            clauses.append(self._q_to_expr(child))
+        combined = (
+            True
+            if not clauses
+            else (or_(*clauses) if q._operator == "OR" else and_(*clauses))
+        )
+        return ~combined if q.negated else combined
+
+    def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
+        """Add **AND** constraints (default behaviour).
+
+        * `expressions` can be raw SQLAlchemy clauses **or** `Q` objects.
+        * `lookups` are Django‑style keyword filters.
         """
-           get object based on conditions
-       """
-        stmt = select(self.model).filter_by(id=pk)
+        self._filtered = True
+        for expr in expressions:
+            self.filters.append(self._q_to_expr(expr) if isinstance(expr, Q) else expr)
+        for k, v in lookups.items():
+            self.filters.append(self._parse_lookup(k, v))
+        return self
 
-        if load_relations:
-            for rel in load_relations:
-                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+    def or_filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
+        """Add one OR group (shortcut for `filter(Q() | Q())`)."""
+        or_clauses: List[Any] = []
+        for expr in expressions:
+            or_clauses.append(self._q_to_expr(expr) if isinstance(expr, Q) else expr)
+        for k, v in lookups.items():
+            or_clauses.append(self._parse_lookup(k, v))
+        if or_clauses:
+            self._filtered = True
+            self.filters.append(or_(*or_clauses))
+        return self
 
-        result = await self.session.execute(stmt)
-        instance = result.scalar_one_or_none()
-
-        if instance is None:
-            raise NotFoundException(
-                message="Object does not exist",
-                status=404,
-                code="0001",
-            )
-
-        return instance
+    def limit(self, value: int) -> "BaseManager[ModelType]":
+        self._limit = value
+        return self
 
     def _apply_eager_loading(self, stmt, load_all_relations: bool = False):
         if not load_all_relations:
             return stmt
-
-        opts = []
-        visited = set()
+        opts: List[Any] = []
+        visited: set[Any] = set()
 
         def recurse(model, loader=None):
             mapper = inspect(model)
             if mapper in visited:
                 return
             visited.add(mapper)
-
             for rel in mapper.relationships:
                 attr = getattr(model, rel.key)
-                if loader is None:
-                    this_loader = selectinload(attr)
-                else:
-                    this_loader = loader.selectinload(attr)
+                this_loader = selectinload(attr) if loader is None else loader.selectinload(attr)
                 opts.append(this_loader)
                 recurse(rel.mapper.class_, this_loader)
 
         recurse(self.model)
         return stmt.options(*opts)
 
-    def filter(self, **kwargs) -> 'BaseManager[ModelType]':
-        """
-           Dynamically apply filters to the query.
-
-           Supported operators:
-             - __eq       (e.g., field__eq=value) or just field=value
-             - __ne       (field__ne=value)
-             - __gt       (field__gt=value)
-             - __lt       (field__lt=value)
-             - __gte      (field__gte=value)
-             - __lte      (field__lte=value)
-             - __in       (field__in=[val1, val2, ...])
-             - __contains (field__contains='text')
-             - __null     (field__null=True/False) - True for IS NULL, False for IS NOT NULL
-
-           Additionally supports nested paths, e.g.,
-             product__shop_id=None
-             product__shop__country='US'
-        """
-        self._filtered = True
-        self.filters = []
-
-        for key, value in kwargs.items():
-            parts = key.split("__")
-
-            operator = "eq"
-
-            if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "null"}:
-                operator = parts.pop()
-
-            current_attr = self.model
-
-            for field_name in parts:
-                attr_candidate = getattr(current_attr, field_name, None)
-                if attr_candidate is None:
-                    raise ValueError(f"Invalid filter field: {'.'.join(parts)}")
-
-                if hasattr(attr_candidate, "property") and isinstance(attr_candidate.property, RelationshipProperty):
-                    current_attr = attr_candidate.property.mapper.class_
-                else:
-                    current_attr = attr_candidate
-
-            if operator == "eq":
-                # e.g., column == value
-                self.filters.append(current_attr == value)
-
-            elif operator == "ne":
-                # e.g., column != value
-                self.filters.append(current_attr != value)
-
-            elif operator == "gt":
-                self.filters.append(current_attr > value)
-
-            elif operator == "lt":
-                self.filters.append(current_attr < value)
-
-            elif operator == "gte":
-                self.filters.append(current_attr >= value)
-
-            elif operator == "lte":
-                self.filters.append(current_attr <= value)
-
-            elif operator == "in":
-                if not isinstance(value, list):
-                    raise ValueError(f"{'.'.join(parts)}__in requires a list, got {type(value)}")
-                self.filters.append(current_attr.in_(value))
-
-            elif operator == "contains":
-                # e.g., column ILIKE %value%
-                self.filters.append(current_attr.ilike(f"%{value}%"))
-                
-            elif operator == "null":
-                if value is True:
-                    self.filters.append(current_attr.is_(None))
-                else:
-                    self.filters.append(current_attr.isnot(None))
-
-        return self
-
-    def _ensure_filtered(self):
-        """Ensure that `filter()` has been called before using certain methods."""
-        if not self._filtered:
-            raise RuntimeError("You must call `filter()` before using this method.")
-
-    async def _execute_query_and_unique_data(self, stmt, load_all_relations: bool) -> List[ModelType]:
+    async def _execute_query(self, stmt, load_all_relations: bool):
         stmt = self._apply_eager_loading(stmt, load_all_relations)
         result = await self.session.execute(stmt)
         rows = result.scalars().all()
-        unique_by_pk = {obj.id: obj for obj in rows}
-        return list(unique_by_pk.values())
+        return list({obj.id: obj for obj in rows}.values())
 
-    async def all(self, load_all_relations: bool = False) -> List[ModelType] | None:
-        try:
-            stmt = select(self.model)
-
-            if self._filtered:
-                stmt = stmt.filter(and_(*self.filters))
-
-            if self._limit:
-                stmt = stmt.limit(self._limit)
-
-            self._clear_query_state()
-
-            return await self._execute_query_and_unique_data(stmt, load_all_relations)
-        finally:
-            self._clear_query_state()
-
-    def _clear_query_state(self):
-        """Clear all query state after execution"""
+    def _reset_state(self):
+        self.filters.clear()
         self._filtered = False
-        self.filters = []
         self._limit = None
 
-    async def paginate(self, limit: int = 10, offset: int = 0, load_all_relations: bool = False) -> List[ModelType]:
+    async def all(self, load_all_relations: bool = False):
+        stmt = select(self.model)
+        if self.filters:
+            stmt = stmt.filter(and_(*self.filters))
+        if self._limit:
+            stmt = stmt.limit(self._limit)
+        try:
+            return await self._execute_query(stmt, load_all_relations)
+        finally:
+            self._reset_state()
+
+    async def first(self, load_relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
-        stmt = select(self.model).filter(and_(*self.filters)).limit(limit).offset(offset)
-        return await self._execute_query_and_unique_data(stmt, load_all_relations)
-
-    def limit(self, value: int) -> 'BaseManager[ModelType]':
-        """
-        Set a limit on the number of results returned by queries like `all()` or `first()`.
-        """
-        self._limit = value
-        return self
-
-    async def first(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
-        """Return the first matching object, or None."""
-        self._ensure_filtered()
-
         stmt = select(self.model).filter(and_(*self.filters))
-
         if load_relations:
             for rel in load_relations:
                 stmt = stmt.options(selectinload(getattr(self.model, rel)))
-
         result = await self.session.execute(stmt)
+        self._reset_state()
         return result.scalars().first()
 
-    async def last(self, load_relations: Sequence[str] = None) -> Optional[ModelType]:
-        """Return the last matching object, or None."""
-
+    async def last(self, load_relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
-
-        stmt = select(self.model).filter(and_(*self.filters)).order_by(desc(self.model.id))
-
+        stmt = (
+            select(self.model)
+            .filter(and_(*self.filters))
+            .order_by(desc(self.model.id))
+        )
         if load_relations:
             for rel in load_relations:
                 stmt = stmt.options(selectinload(getattr(self.model, rel)))
-
         result = await self.session.execute(stmt)
+        self._reset_state()
         return result.scalars().first()
 
     async def count(self) -> int:
-        """Return the count of matching records."""
-
         self._ensure_filtered()
         query = select(func.count()).select_from(self.model).filter(and_(*self.filters))
         result = await self.session.execute(query)
+        self._reset_state()
         return result.scalar_one()
 
-    @with_transaction_error_handling
-    async def create(self, **kwargs) -> ModelType:
-        """
-               Create a new object
-        """
-        obj = self.model(**kwargs)
+    async def paginate(
+            self,
+            limit: int = 10,
+            offset: int = 0,
+            load_all_relations: bool = False,
+    ):
+        self._ensure_filtered()
+        stmt = (
+            select(self.model)
+            .filter(and_(*self.filters))
+            .limit(limit)
+            .offset(offset)
+        )
+        try:
+            return await self._execute_query(stmt, load_all_relations)
+        finally:
+            self._reset_state()
 
+    @with_transaction_error_handling
+    async def create(self, **kwargs):
+        obj = self.model(**kwargs)
         self.session.add(obj)
         await self.session.flush()
         return await self._smart_commit(obj)
 
     @with_transaction_error_handling
-    async def delete(self, instance: ModelType = None) -> bool:
-        """
-        Delete object(s) with flexible filtering options
-            - If `instance` is provided, delete that single instance.
-            - If `instance` is not provided, delete according to self.filters.
-
-        :arg instance: Model instance to delete.
-        :return: Number of deleted records or None
-        """
-
-        if instance is not None:
-            await self.session.delete(instance)
-            await self.session.commit()
-            return True
-
-        self._ensure_filtered()
-
-        try:
-            delete_stmt = delete(self.model).where(and_(*self.filters))
-            await self.session.execute(delete_stmt)
-            await self.session.commit()
-            return True
-        except NoResultFound:
-            return False
-
-    @with_transaction_error_handling
-    async def bulk_delete(self) -> int:
-        """
-            Bulk delete with flexible filtering.
-
-            Automatically commits if not inside a transaction.
-
-            :return: Number of deleted records
-        """
-        self._ensure_filtered()
-
-        delete_stmt = delete(self.model).where(and_(*self.filters))
-        result = await self.session.execute(delete_stmt)
-        await self._smart_commit()
-        return result.rowcount  # ignore
-
-    @with_transaction_error_handling
-    async def update_by_filters(self, filters: Dict, **update_fields) -> Optional[ModelType]:
-        """
-        Update object(s) with flexible filtering options
-
-        :param filters: Conditions for selecting records to update
-        :param update_fields: Fields and values to update
-        :return: Number of updated records
-        """
-        if not update_fields:
-            raise InternalException("No fields provided for update")
-
-        update_stmt = update(self.model).filter_by(**filters).values(**update_fields)
-        await self.session.execute(update_stmt)
-        await self.session.commit()
-        updated_instance = await self.get(**filters)
-        return updated_instance
-
-    @with_transaction_error_handling
-    async def update(self, instance: ModelType, **update_fields) -> Optional[ModelType]:
-        """
-        Update an existing database instance with new fields
-
-        :param instance: The database model instance to update
-        :param update_fields: Keyword arguments of fields to update
-        :return: The updated instance
-
-        :raises InternalException: If integrity violation
-        :raises DatabaseException: For database-related errors
-        """
-        # Validate update fields
-        if not update_fields:
-            raise InternalException("No fields provided for update")
-
-        # Apply updates directly to the instance
-        for key, value in update_fields.items():
-            setattr(instance, key, value)
-
-        self.session.add(instance)
-        await self._smart_commit()
-
-        return instance
-
-    @with_transaction_error_handling
-    async def save(self, instance: ModelType) -> Optional[ModelType]:
-        """
-        Save instance
-
-        :param instance: The database model instance to save
-        :return: The saved instance
-
-        Automatically commits if not inside a transaction.
-
-        :raises InternalException: If integrity violation
-        :raises DatabaseException: For database-related errors
-        """
+    async def save(self, instance: ModelType):
         self.session.add(instance)
         await self.session.flush()
         return await self._smart_commit(instance)
 
     @with_transaction_error_handling
-    async def lazy_save(self, instance: ModelType, load_relations: Sequence[str] = None) -> Optional[ModelType]:
+    async def update(self, instance: ModelType, **fields):
+        if not fields:
+            raise InternalException("No fields provided for update")
+        for k, v in fields.items():
+            setattr(instance, k, v)
         self.session.add(instance)
-        await self.session.flush()
-        await self._smart_commit(instance)
-
-        if load_relations is None:
-            mapper = inspect(self.model)
-            load_relations = [rel.key for rel in mapper.relationships]
-
-        if not load_relations:
-            return instance
-
-        stmt = select(self.model).filter_by(id=instance.id)
-
-        for rel in load_relations:
-            stmt = stmt.options(selectinload(getattr(self.model, rel)))
-
-        result = await self.session.execute(stmt)
-        loaded_instance = result.scalar_one_or_none()
-
-        if loaded_instance is None:
-            raise NotFoundException(
-                message="Object saved but could not be retrieved with relationships",
-                status=404,
-                code="0001",
-            )
-
-        return loaded_instance
-
-    async def is_exists(self, **kwargs) -> bool:
-        stmt = select(self.model).filter_by(**kwargs)
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        await self._smart_commit()
+        return instance
 
     @with_transaction_error_handling
-    async def bulk_save(self, instances: List[ModelType]) -> None:
-        """
-        Bulk save a list of instances into the database.
+    async def update_by_filters(self, filters: Dict[str, Any], **fields):
+        if not fields:
+            raise InternalException("No fields provided for update")
+        stmt = update(self.model).filter_by(**filters).values(**fields)
+        await self.session.execute(stmt)
+        await self.session.commit()
+        return await self.get(**filters)
 
-        If inside a transaction, flushes only.
-        If not in a transaction, commits after flush.
+    @with_transaction_error_handling
+    async def delete(self, instance: Optional[ModelType] = None):
+        if instance is not None:
+            await self.session.delete(instance)
+            await self.session.commit()
+            return True
+        self._ensure_filtered()
+        stmt = delete(self.model).where(and_(*self.filters))
+        await self.session.execute(stmt)
+        await self.session.commit()
+        self._reset_state()
+        return True
 
-        :param instances: List of instances
-        :raises DatabaseException: If any database error occurs
-        :raises InternalException: If any unexpected error occurs
-        """
+    @with_transaction_error_handling
+    async def bulk_save(self, instances: Iterable[ModelType]):
         if not instances:
             return
-
-        self.session.add_all(instances)
+        self.session.add_all(list(instances))
         await self.session.flush()
-
         if not self.session.in_transaction():
             await self.session.commit()
 
-    def has_relation(self, relation_name: str) -> 'BaseManager[ModelType]':
-        """
-           Check if a relationship exists between models using an EXISTS subquery.
+    @with_transaction_error_handling
+    async def bulk_delete(self):
+        self._ensure_filtered()
+        stmt = delete(self.model).where(and_(*self.filters))
+        result = await self.session.execute(stmt)
+        await self._smart_commit()
+        self._reset_state()
+        return result.rowcount
 
-           :param relation_name Name of the relationship to check. Must be a valid relationship
-                   defined in the model.
+    async def get(
+            self,
+            pk: Union[str, int, uuid.UUID],
+            load_relations: Optional[Sequence[str]] = None,
+    ):
+        stmt = select(self.model).filter_by(id=pk)
+        if load_relations:
+            for rel in load_relations:
+                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+        result = await self.session.execute(stmt)
+        instance = result.scalar_one_or_none()
+        if instance is None:
+            raise NotFoundException("Object does not exist", 404, "0001")
+        return instance
 
-           :return BaseManager[ModelType]: Self instance for method chaining.
+    async def is_exists(self, **lookups):
+        stmt = select(self.model).filter_by(**lookups)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
 
-           :raise DatabaseException: If there's an error constructing the subquery.
-           :raise InternalException: If there's an unexpected error in relationship handling.
-
-           Notes:
-               - The relationship must be properly defined in the SQLAlchemy model
-               - Uses a non-correlated EXISTS subquery for better performance
-               - Silently continues if the relationship doesn't exist
-           """
-        # Get the relationship property
+    def has_relation(self, relation_name: str):
         relationship = getattr(self.model, relation_name)
-
-        # Create subquery using select
         subquery = (
             select(1)
             .select_from(relationship.property.mapper.class_)
             .where(relationship.property.primaryjoin)
             .exists()
         )
-
-        # Add the exists condition to filters
         self.filters.append(subquery)
-
+        self._filtered = True
         return self
 
-    def model_to_dict(self, instance: ModelType, exclude: set = None):
+    def model_to_dict(self, instance: ModelType, exclude: set[str] | None = None):
         exclude = exclude or set()
-
         return {
-            c.key: getattr(instance, c.key)
-            for c in inspect(instance).mapper.column_attrs
-            if c.key not in exclude
+            col.key: getattr(instance, col.key)
+            for col in inspect(instance).mapper.column_attrs
+            if col.key not in exclude
         }
+
+    def _ensure_filtered(self):
+        if not self._filtered:
+            raise RuntimeError("You must call `filter()` before this operation.")
 
