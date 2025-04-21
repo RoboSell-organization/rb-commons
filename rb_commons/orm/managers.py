@@ -403,8 +403,10 @@ class BaseManager(Generic[ModelType]):
             raise NotFoundException("Object does not exist", 404, "0001")
         return instance
 
-    async def is_exists(self, **lookups):
-        stmt = select(self.model).filter_by(**lookups)
+    async def is_exists(self):
+        self._ensure_filtered()
+
+        stmt = select(self.model).filter(and_(*self.filters))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
