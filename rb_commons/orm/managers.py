@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable
-from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_
+from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_, asc
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload, RelationshipProperty, Load
@@ -420,6 +420,25 @@ class BaseManager(Generic[ModelType]):
         )
         self.filters.append(subquery)
         self._filtered = True
+        return self
+
+    def sort_by(self, tokens: Sequence[str]) -> "BaseManager[ModelType]":
+        """
+        Dynamically apply ORDER BY clauses based on a list of "field" or "-field" tokens.
+        """
+        model = self.model
+
+        for tok in tokens:
+            if not tok:
+                continue
+            direction = desc if tok.startswith("-") else asc
+            name = tok.lstrip("-")
+            col = getattr(model, name, None)
+            if col is None:
+                raise InternalException(f"Cannot sort by unknown field '{name}'")
+
+            self._order_by.append(direction(col))
+
         return self
 
     def model_to_dict(self, instance: ModelType, exclude: set[str] | None = None):
