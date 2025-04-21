@@ -277,11 +277,8 @@ class BaseManager(Generic[ModelType]):
         if self.filters:
             stmt = stmt.where(and_(*self.filters))
 
-        try:
-            result = await self.session.execute(stmt)
-            return int(result.scalar_one())
-        finally:
-            self._reset_state()
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one())
 
     async def paginate(self, limit=10, offset=0, load_all_relations=False):
         self._ensure_filtered()
