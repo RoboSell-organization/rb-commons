@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="rb-commons",
-    version="0.5.9",
+    version="0.5.10",
     author="Abdulvoris",
     author_email="erkinovabdulvoris101@gmail.com",
     description="Commons of project and simplified orm based on sqlalchemy.",

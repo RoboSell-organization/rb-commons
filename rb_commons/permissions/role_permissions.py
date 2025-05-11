@@ -23,7 +23,7 @@ class IsAdmin(BasePermission):
 
 class IsCustomer(BasePermission):
     def has_permission(self, claims: Claims) -> bool:
-        return claims.user_role == UserRole.CUSTOMER and claims.user_id is not None
+        return claims.user_role == UserRole.CUSTOMER and claims.user_id is not None and claims.shop_id is not None
 
 
 IsAdminDep = Annotated[Claims, Depends(IsAdmin())]
