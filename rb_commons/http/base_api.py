@@ -60,7 +60,13 @@ class BaseAPI:
 
             response = request_methods[method](url, **kwargs)
 
-            data = response.json()
+            try:
+                if response.text.strip():
+                    data = response.json()
+                else:
+                    data = {}
+            except ValueError as e:
+                raise BadRequestException(f"Invalid JSON response: {response.text}")
 
             if not (200 <= response.status_code < 300):
                 error_message = data.get("message")
