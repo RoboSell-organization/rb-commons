@@ -16,13 +16,15 @@ class Claims(BaseModel):
     user_id: Optional[int] = Field(None, alias="x-user-id")
     user_role: UserRole = Field(UserRole.GUEST, alias="x-user-role")
     shop_id: Optional[uuid.UUID] = Field(None, alias="x-shop-id")
+    jwt_token: Optional[str] = Field(None, alias="x-jwt-token")
 
     @classmethod
     def from_headers(cls, headers: dict) -> 'Claims':
         raw_claims = {
             "x-user-id": headers.get("x-user-id"),
             "x-user-role": headers.get("x-user-role", "admin"),
-            "x-shop-id": headers.get("x-shop-id")
+            "x-shop-id": headers.get("x-shop-id"),
+            "x-jwt-token": headers.get("x-jwt-token")
         }
 
         try:
@@ -43,6 +45,12 @@ class Claims(BaseModel):
                     UserRole(raw_claims["x-user-role"].lower())
                 except ValueError as e:
                     raise ValueError(f"Invalid user_role: {e}")
+
+            if raw_claims["x-jwt-token"]:
+                try:
+                    raw_claims["x-jwt-token"] = str(raw_claims["x-jwt-token"])
+                except ValueError as e:
+                    raise ValueError(f"Invalid jwt token format: {e}")
 
             return cls(**raw_claims)
 
