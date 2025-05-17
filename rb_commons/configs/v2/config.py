@@ -44,7 +44,7 @@ class CommonConfigs(BaseSettings):
         return None
 
     class Config:
-        env_file = ".env"
+        env_file = "/robosell/.env"
         env_file_encoding = "utf-8"
         extra = "ignore"
 
