@@ -1,5 +1,6 @@
 from typing import Optional, Any
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 class CommonConfigs(BaseSettings):
@@ -24,6 +25,18 @@ class CommonConfigs(BaseSettings):
     DIGITALOCEAN_STORAGE_BUCKET_NAME: Optional[str] = None
     DIGITALOCEAN_S3_ENDPOINT_URL: Optional[str] = None
 
+    @field_validator("POSTGRES_PORT", mode="before")
+    @classmethod
+    def convert_port(cls, value):
+        print("DEBUG: POSTGRES_PORT from env =", value)
+
+        if value is None:
+            return None
+        try:
+            print(value)
+            return int(value)
+        except ValueError:
+            raise ValueError(f"POSTGRES_PORT must be an integer, got: {value}")
 
     @property
     def database_url(self) -> Optional[str]:
