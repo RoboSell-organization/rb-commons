@@ -67,10 +67,10 @@ class BaseAPI:
                     data = {}
             except ValueError as e:
                 error_message = data.get("message") or data.get("detail") or response.text
-                raise BadRequestException(f"Invalid JSON response: {response.text}", additional_info={"error_message": error_message})
+                raise BadRequestException(f"Invalid JSON response", additional_info={"error_message": error_message})
             if not (200 <= response.status_code < 300):
                 error_message = data.get("message") or data.get("detail") or response.text
-                raise BadRequestException(f"Unexpected error occured: {response.text}", additional_info={"error_message": error_message})
+                raise BadRequestException(f"Unexpected error occured", additional_info={"error_message": error_message})
 
             return response
 
