@@ -66,25 +66,22 @@ class BaseAPI:
                 else:
                     data = {}
             except ValueError as e:
-                raise BadRequestException(f"Invalid JSON response: {response.text}")
-
+                error_message = data.get("message") or data.get("detail") or response.text
+                raise BadRequestException(f"Invalid JSON response: {response.text}", additional_info={"error_message": error_message})
             if not (200 <= response.status_code < 300):
-                error_message = data.get("message")
-                if error_message is not None:
-                    raise BadRequestException(error_message)
-
-                raise BadRequestException(f"Unexpected error occured: {response.text}")
+                error_message = data.get("message") or data.get("detail") or response.text
+                raise BadRequestException(f"Unexpected error occured: {response.text}", additional_info={"error_message": error_message})
 
             return response
 
         except RequestException as e:
-            raise BadRequestException(f"Request failed: {e}")
-        except BadRequestException as e:
-            raise BadRequestException(e.message)
+            raise BadRequestException(f"Request exception: {str(e)}", additional_info={"error_message": str(e)})
+        except BadRequestException:
+            raise
         except (json.JSONDecodeError, ValueError) as e:
-            raise InternalException(f"Failed to parse JSON: {e}")
+            raise InternalException(f"Failed to parse JSON: {str(e)}")
         except Exception as e:
-            raise InternalException("Something went wrong")
+            raise InternalException(f"Unhandled error: {str(e)}")
 
     def _post(self, path: str, data: dict | list, headers: dict = None, params: dict = None, reset_base_url: bool = False, form_encoded: bool = False) -> requests.Response:
         return self._make_request('POST', path, data=data, headers=headers, params=params, reset_base_url=reset_base_url, form_encoded=form_encoded)
