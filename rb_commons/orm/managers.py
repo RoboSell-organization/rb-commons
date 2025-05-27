@@ -12,6 +12,16 @@ from rb_commons.orm.exceptions import DatabaseException, InternalException
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
 
+class QJSON:
+    def __init__(self, field: str, key: str, operator: str, value: Any):
+        self.field = field
+        self.key = key
+        self.operator = operator
+        self.value = value
+
+    def __repr__(self):
+        return f"QJSON(field={self.field}, key={self.key}, op={self.operator}, value={self.value})"
+
 class Q:
     """Boolean logic container that can be combined with `&`, `|`, and `~`."""
 
@@ -124,7 +134,10 @@ class BaseManager(Generic[ModelType]):
             return current.is_(None) if value else current.isnot(None)
         raise ValueError(f"Unsupported operator in lookup: {lookup}")
 
-    def _q_to_expr(self, q: Q):
+    def _q_to_expr(self, q: Union[Q, QJSON]):
+        if isinstance(q, QJSON):
+            return self._parse_qjson(q)
+
         clauses: List[Any] = [self._parse_lookup(k, v) for k, v in q.lookups.items()]
         for child in q.children:
             clauses.append(self._q_to_expr(child))
@@ -134,6 +147,29 @@ class BaseManager(Generic[ModelType]):
             else (or_(*clauses) if q._operator == "OR" else and_(*clauses))
         )
         return ~combined if q.negated else combined
+
+    def _parse_qjson(self, qjson: QJSON):
+        col = getattr(self.model, qjson.field, None)
+        if col is None:
+            raise ValueError(f"Invalid JSON field: {qjson.field}")
+
+        json_expr = col[qjson.key].astext
+
+        if qjson.operator == "eq":
+            return json_expr == str(qjson.value)
+        if qjson.operator == "ne":
+            return json_expr != str(qjson.value)
+        if qjson.operator == "contains":
+            return json_expr.ilike(f"%{qjson.value}%")
+        if qjson.operator == "startswith":
+            return json_expr.ilike(f"{qjson.value}%")
+        if qjson.operator == "endswith":
+            return json_expr.ilike(f"%{qjson.value}")
+        if qjson.operator == "in":
+            if not isinstance(qjson.value, (list, tuple, set)):
+                raise ValueError(f"{qjson.field}[{qjson.key}]__in requires an iterable")
+            return json_expr.in_(qjson.value)
+        raise ValueError(f"Unsupported QJSON operator: {qjson.operator}")
 
     def _loader_from_path(self, path: str) -> Load:
         """
@@ -173,25 +209,31 @@ class BaseManager(Generic[ModelType]):
         return self
 
     def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
-        """Add **AND** constraints (default behaviour).
+        """Add **AND** constraints (default behaviour)."""
 
-        * `expressions` can be raw SQLAlchemy clauses **or** `Q` objects.
-        * `lookups` are Django‑style keyword filters.
-        """
         self._filtered = True
         for expr in expressions:
-            self.filters.append(self._q_to_expr(expr) if isinstance(expr, Q) else expr)
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                self.filters.append(self._q_to_expr(expr))
+            else:
+                self.filters.append(expr)
         for k, v in lookups.items():
             self.filters.append(self._parse_lookup(k, v))
         return self
 
     def or_filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
         """Add one OR group (shortcut for `filter(Q() | Q())`)."""
+
         or_clauses: List[Any] = []
         for expr in expressions:
-            or_clauses.append(self._q_to_expr(expr) if isinstance(expr, Q) else expr)
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                or_clauses.append(self._q_to_expr(expr))
+            else:
+                or_clauses.append(expr)
+
         for k, v in lookups.items():
             or_clauses.append(self._parse_lookup(k, v))
+
         if or_clauses:
             self._filtered = True
             self.filters.append(or_(*or_clauses))
