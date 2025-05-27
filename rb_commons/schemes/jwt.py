@@ -36,7 +36,7 @@ class Claims(BaseModel):
                 except ValueError as e:
                     raise ValueError(f"Invalid user_id format: {e}")
 
-            if raw_claims["x-customer-id"] and raw_claims["x-customer-id"] is not None:
+            if raw_claims["x-customer-id"] and raw_claims["x-customer-id"] != 'null':
                 try:
                     raw_claims["x-customer-id"] = int(raw_claims["x-customer-id"])
                 except ValueError as e:
