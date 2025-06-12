@@ -467,7 +467,10 @@ class BaseManager(Generic[ModelType]):
     def sort_by(self, tokens: Sequence[str]) -> "BaseManager[ModelType]":
         """
         Dynamically apply ORDER BY clauses based on a list of "field" or "-field" tokens.
+        Unknown fields are collected for Python-side sorting later.
         """
+        self._invalid_sort_tokens = []
+        self._order_by = []
         model = self.model
 
         for tok in tokens:
@@ -477,8 +480,8 @@ class BaseManager(Generic[ModelType]):
             name = tok.lstrip("-")
             col = getattr(model, name, None)
             if col is None:
-                raise InternalException(f"Cannot sort by unknown field '{name}'")
-
+                self._invalid_sort_tokens.append(tok)
+                continue
             self._order_by.append(direction(col))
 
         return self
