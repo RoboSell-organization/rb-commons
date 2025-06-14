@@ -86,6 +86,7 @@ class BaseManager(Generic[ModelType]):
         self._filtered: bool = False
         self._limit: Optional[int] = None
         self._order_by: List[Any] = []
+        self._joins: set[str] = set()
 
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
@@ -102,13 +103,14 @@ class BaseManager(Generic[ModelType]):
             operator = parts.pop()
 
         current: Union[Type[ModelType], InstrumentedAttribute] = self.model
-        # walk relationships
+        path_parts = []
         for field in parts:
             attr = getattr(current, field, None)
             if attr is None:
                 raise ValueError(f"Invalid filter field: {'.'.join(parts)}")
             if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
                 current = attr.property.mapper.class_
+                path_parts.append(field)
             else:
                 current = attr
 
@@ -208,17 +210,21 @@ class BaseManager(Generic[ModelType]):
 
         return self
 
-    def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
-        """Add **AND** constraints (default behaviour)."""
-
+    def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager":
         self._filtered = True
-        for expr in expressions:
-            if isinstance(expr, Q) or isinstance(expr, QJSON):
-                self.filters.append(self._q_to_expr(expr))
-            else:
-                self.filters.append(expr)
+
         for k, v in lookups.items():
+            root = k.split("__", 1)[0]
+            if hasattr(self.model, root):
+                attr = getattr(self.model, root)
+                if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
+                    self._joins.add(root)
+
             self.filters.append(self._parse_lookup(k, v))
+
+        for expr in expressions:
+            self.filters.append(self._q_to_expr(expr) if isinstance(expr, Q) else expr)
+
         return self
 
     def or_filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
@@ -273,9 +279,23 @@ class BaseManager(Generic[ModelType]):
         self.filters.clear()
         self._filtered = False
         self._limit = None
+        self._joins.clear()
 
     async def all(self, load_all_relations: bool = False):
         stmt = select(self.model)
+
+        for rel_path in self._joins:
+            rel_model = self.model
+            join_attr = None
+
+            for part in rel_path.split("__"):
+                join_attr = getattr(rel_model, part)
+                if not hasattr(join_attr, "property"):
+                    raise ValueError(f"Invalid join path: {rel_path}")
+                rel_model = join_attr.property.mapper.class_
+
+            stmt = stmt.join(join_attr)
+
         if self.filters:
             stmt = stmt.filter(and_(*self.filters))
         if self._order_by:
