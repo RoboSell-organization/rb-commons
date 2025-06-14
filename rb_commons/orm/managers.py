@@ -97,6 +97,14 @@ class BaseManager(Generic[ModelType]):
         return None
 
     def _parse_lookup(self, lookup: str, value: Any):
+        root = lookup.split("__", 1)[0]
+
+        if hasattr(self.model, root):
+            attr0 = getattr(self.model, root)
+            if hasattr(attr0, "property") and isinstance(attr0.property, RelationshipProperty):
+                self._joins.add(root)
+                parts = lookup.split("__")
+
         parts = lookup.split("__")
         operator = "eq"
         if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "null"}:
