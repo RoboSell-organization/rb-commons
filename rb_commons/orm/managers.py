@@ -233,7 +233,10 @@ class BaseManager(Generic[ModelType]):
             self.filters.append(self._parse_lookup(k, v))
 
         for expr in expressions:
-            self.filters.append(self._q_to_expr(expr) if isinstance(expr, Q) else expr)
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                self.filters.append(self._q_to_expr(expr))
+            else:
+                self.filters.append(expr)
 
         return self
 
