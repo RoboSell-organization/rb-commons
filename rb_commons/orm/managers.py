@@ -476,9 +476,13 @@ class BaseManager(Generic[ModelType]):
     async def is_exists(self):
         self._ensure_filtered()
 
-        stmt = select(self.model).filter(and_(*self.filters))
+        stmt = (
+            select(self.model)
+            .filter(and_(*self.filters))
+            .limit(1)
+        )
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        return result.scalars().first() is not None
 
     def has_relation(self, relation_name: str):
         relationship = getattr(self.model, relation_name)
