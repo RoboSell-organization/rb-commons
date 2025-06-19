@@ -141,7 +141,11 @@ class BaseManager(Generic[ModelType]):
         if relationship_attr:
             col = attr
             expr = self._build_comparison(col, operator, value)
-            return relationship_attr.any(expr)
+            prop = relationship_attr.property
+            if getattr(prop, "uselist", False):
+                return relationship_attr.any(expr)
+            else:
+                return relationship_attr.has(expr)
 
         col = getattr(self.model, parts[0], None) if len(parts) == 1 else attr
         return self._build_comparison(col, operator, value)
