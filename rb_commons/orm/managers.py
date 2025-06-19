@@ -96,53 +96,55 @@ class BaseManager(Generic[ModelType]):
             return instance
         return None
 
+    def _build_comparison(self, col, operator: str, value: Any):
+        if operator == "eq":
+            return col == value
+        if operator == "ne":
+            return col != value
+        if operator == "gt":
+            return col > value
+        if operator == "lt":
+            return col < value
+        if operator == "gte":
+            return col >= value
+        if operator == "lte":
+            return col <= value
+        if operator == "in":
+            return col.in_(value)
+        if operator == "contains":
+            return col.ilike(f"%{value}%")
+        if operator == "null":
+            return col.is_(None) if value else col.isnot(None)
+        raise ValueError(f"Unsupported operator: {operator}")
+
     def _parse_lookup(self, lookup: str, value: Any):
-        root = lookup.split("__", 1)[0]
-
-        if hasattr(self.model, root):
-            attr0 = getattr(self.model, root)
-            if hasattr(attr0, "property") and isinstance(attr0.property, RelationshipProperty):
-                self._joins.add(root)
-                parts = lookup.split("__")
-
         parts = lookup.split("__")
         operator = "eq"
         if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "null"}:
             operator = parts.pop()
 
-        current: Union[Type[ModelType], InstrumentedAttribute] = self.model
-        path_parts = []
-        for field in parts:
-            attr = getattr(current, field, None)
-            if attr is None:
-                raise ValueError(f"Invalid filter field: {'.'.join(parts)}")
-            if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
-                current = attr.property.mapper.class_
-                path_parts.append(field)
-            else:
-                current = attr
+        current_model = self.model
+        attr = None
+        relationship_attr = None
+        for idx, part in enumerate(parts):
+            candidate = getattr(current_model, part, None)
+            if candidate is None:
+                raise ValueError(f"Invalid filter field: {lookup!r}")
 
-        if operator == "eq":
-            return current == value
-        if operator == "ne":
-            return current != value
-        if operator == "gt":
-            return current > value
-        if operator == "lt":
-            return current < value
-        if operator == "gte":
-            return current >= value
-        if operator == "lte":
-            return current <= value
-        if operator == "in":
-            if not isinstance(value, (list, tuple, set)):
-                raise ValueError(f"{lookup}__in requires an iterable")
-            return current.in_(value)
-        if operator == "contains":
-            return current.ilike(f"%{value}%")
-        if operator == "null":
-            return current.is_(None) if value else current.isnot(None)
-        raise ValueError(f"Unsupported operator in lookup: {lookup}")
+            prop = getattr(candidate, "property", None)
+            if prop and isinstance(prop, RelationshipProperty):
+                relationship_attr = candidate
+                current_model = prop.mapper.class_
+            else:
+                attr = candidate
+
+        if relationship_attr:
+            col = attr
+            expr = self._build_comparison(col, operator, value)
+            return relationship_attr.any(expr)
+
+        col = getattr(self.model, parts[0], None) if len(parts) == 1 else attr
+        return self._build_comparison(col, operator, value)
 
     def _q_to_expr(self, q: Union[Q, QJSON]):
         if isinstance(q, QJSON):
