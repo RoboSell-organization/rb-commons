@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable
 from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_, asc
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError, NoResultFound
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import declarative_base, InstrumentedAttribute, selectinload, RelationshipProperty, Load
-
+from sqlalchemy.orm import declarative_base, selectinload, RelationshipProperty, Load
 from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
+from functools import lru_cache
+
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
 
@@ -117,38 +118,39 @@ class BaseManager(Generic[ModelType]):
             return col.is_(None) if value else col.isnot(None)
         raise ValueError(f"Unsupported operator: {operator}")
 
-    def _parse_lookup(self, lookup: str, value: Any):
+    @lru_cache(maxsize=None)
+    def _parse_lookup_meta(self, lookup: str):
+        """
+            One-time parse of "foo__bar__lt" into:
+            - parts = ["foo","bar"]
+            - operator="lt"
+            - relationship_attr, column_attr pointers
+        """
+
         parts = lookup.split("__")
         operator = "eq"
         if parts[-1] in {"eq", "ne", "gt", "lt", "gte", "lte", "in", "contains", "null"}:
             operator = parts.pop()
 
-        current_model = self.model
-        attr = None
-        relationship_attr = None
-        for idx, part in enumerate(parts):
-            candidate = getattr(current_model, part, None)
-            if candidate is None:
-                raise ValueError(f"Invalid filter field: {lookup!r}")
-
-            prop = getattr(candidate, "property", None)
-            if prop and isinstance(prop, RelationshipProperty):
-                relationship_attr = candidate
-                current_model = prop.mapper.class_
+        current = self.model
+        rel = None
+        col = None
+        for p in parts:
+            a = getattr(current, p)
+            if hasattr(a, "property") and isinstance(a.property, RelationshipProperty):
+                rel = a
+                current = a.property.mapper.class_
             else:
-                attr = candidate
+                col = a
+        return parts, operator, rel, col
 
-        if relationship_attr:
-            col = attr
-            expr = self._build_comparison(col, operator, value)
-            prop = relationship_attr.property
-            if getattr(prop, "uselist", False):
-                return relationship_attr.any(expr)
-            else:
-                return relationship_attr.has(expr)
-
-        col = getattr(self.model, parts[0], None) if len(parts) == 1 else attr
-        return self._build_comparison(col, operator, value)
+    def _parse_lookup(self, lookup: str, value: Any):
+        parts, operator, rel_attr, col_attr = self._parse_lookup_meta(lookup)
+        expr = self._build_comparison(col_attr, operator, value)
+        if rel_attr:
+            prop = rel_attr.property
+            return prop.uselist and rel_attr.any(expr) or rel_attr.has(expr)
+        return expr
 
     def _q_to_expr(self, q: Union[Q, QJSON]):
         if isinstance(q, QJSON):
@@ -186,27 +188,6 @@ class BaseManager(Generic[ModelType]):
                 raise ValueError(f"{qjson.field}[{qjson.key}]__in requires an iterable")
             return json_expr.in_(qjson.value)
         raise ValueError(f"Unsupported QJSON operator: {qjson.operator}")
-
-    def _loader_from_path(self, path: str) -> Load:
-        """
-        Turn 'attributes.attribute.attribute_group' into
-        selectinload(Product.attributes)
-            .selectinload(Attribute.attribute)
-            .selectinload(ProductAttributeGroup.attribute_group)
-        """
-        parts = path.split(".")
-        current_model = self.model
-        loader = None
-
-        for segment in parts:
-            attr = getattr(current_model, segment, None)
-            if attr is None or not hasattr(attr, "property"):
-                raise ValueError(f"Invalid relationship path: {path!r}")
-
-            loader = selectinload(attr) if loader is None else loader.selectinload(attr)
-            current_model = attr.property.mapper.class_  # step down the graph
-
-        return loader
 
     def order_by(self, *columns: Any):
         """Collect ORDER BY clauses.
@@ -266,28 +247,22 @@ class BaseManager(Generic[ModelType]):
         self._limit = value
         return self
 
-    def _apply_eager_loading(self, stmt, load_all_relations: bool = False):
-        if not load_all_relations:
-            return stmt
-        opts: List[Any] = []
-        visited: set[Any] = set()
+    def _build_relation_loaders(self, model: Any, relations: Sequence[str]) -> List[Load]:
+        """
+            Turn ['cat','product__tags'] into
+            [selectinload(model.cat),
+             selectinload(model.product).selectinload('tags')]
+        """
+        loaders: List[Load] = []
+        for path in relations:
+            parts = path.split("__")
+            loader = selectinload(getattr(model, parts[0]))
+            for sub in parts[1:]:
+                loader = loader.selectinload(sub)
+            loaders.append(loader)
+        return loaders
 
-        def recurse(model, loader=None):
-            mapper = inspect(model)
-            if mapper in visited:
-                return
-            visited.add(mapper)
-            for rel in mapper.relationships:
-                attr = getattr(model, rel.key)
-                this_loader = selectinload(attr) if loader is None else loader.selectinload(attr)
-                opts.append(this_loader)
-                recurse(rel.mapper.class_, this_loader)
-
-        recurse(self.model)
-        return stmt.options(*opts)
-
-    async def _execute_query(self, stmt, load_all_relations: bool):
-        stmt = self._apply_eager_loading(stmt, load_all_relations)
+    async def _execute_query(self, stmt):
         result = await self.session.execute(stmt)
         rows = result.scalars().all()
         return list({obj.id: obj for obj in rows}.values())
@@ -298,20 +273,12 @@ class BaseManager(Generic[ModelType]):
         self._limit = None
         self._joins.clear()
 
-    async def all(self, load_all_relations: bool = False):
+    async def all(self, relations: Optional[List[str]] = None):
         stmt = select(self.model)
 
-        for rel_path in self._joins:
-            rel_model = self.model
-            join_attr = None
-
-            for part in rel_path.split("__"):
-                join_attr = getattr(rel_model, part)
-                if not hasattr(join_attr, "property"):
-                    raise ValueError(f"Invalid join path: {rel_path}")
-                rel_model = join_attr.property.mapper.class_
-
-            stmt = stmt.join(join_attr)
+        if relations:
+            opts = self._build_relation_loaders(self.model, relations)
+            stmt = stmt.options(*opts)
 
         if self.filters:
             stmt = stmt.filter(and_(*self.filters))
@@ -319,32 +286,38 @@ class BaseManager(Generic[ModelType]):
             stmt = stmt.order_by(*self._order_by)
         if self._limit:
             stmt = stmt.limit(self._limit)
+
         try:
-            return await self._execute_query(stmt, load_all_relations)
+            return await self._execute_query(stmt)
         finally:
             self._reset_state()
 
-    async def first(self, load_relations: Optional[Sequence[str]] = None):
+    async def first(self, relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
+
         if self._order_by:
             stmt = stmt.order_by(*self._order_by)
-        if load_relations:
-            for rel in load_relations:
-                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+
+        if relations:
+            opts = self._build_relation_loaders(self.model, relations)
+            stmt = stmt.options(*opts)
+
         result = await self.session.execute(stmt)
         self._reset_state()
         return result.scalars().first()
 
 
-    async def last(self, load_relations: Optional[Sequence[str]] = None):
+    async def last(self, relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
         order = self._order_by or [self.model.id.desc()]
-        stmt = stmt.order_by(*order[::-1])  # reverse for LAST
-        if load_relations:
-            for rel in load_relations:
-                stmt = stmt.options(selectinload(getattr(self.model, rel)))
+        stmt = stmt.order_by(*order[::-1])  # reverse for last
+
+        if relations:
+            opts = self._build_relation_loaders(self.model, relations)
+            stmt = stmt.options(*opts)
+
         result = await self.session.execute(stmt)
         self._reset_state()
         return result.scalars().first()
@@ -359,14 +332,14 @@ class BaseManager(Generic[ModelType]):
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
 
-    async def paginate(self, limit=10, offset=0, load_all_relations=False):
+    async def paginate(self, limit: int = 10, offset: int = 0):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
         if self._order_by:
             stmt = stmt.order_by(*self._order_by)
         stmt = stmt.limit(limit).offset(offset)
         try:
-            return await self._execute_query(stmt, load_all_relations)
+            return await self._execute_query(stmt)
         finally:
             self._reset_state()
 
@@ -384,34 +357,25 @@ class BaseManager(Generic[ModelType]):
         return await self._smart_commit(instance)
 
     @with_transaction_error_handling
-    async def lazy_save(self, instance: ModelType, load_relations: Sequence[str] = None) -> Optional[ModelType]:
+    async def lazy_save(self, instance: ModelType, relations: list[str] | None = None) -> ModelType:
         self.session.add(instance)
-        await self.session.flush()
-        await self._smart_commit(instance)
+        await self.session.commit()
 
-        if load_relations is None:
+        if relations is None:
+            from sqlalchemy.inspection import inspect
             mapper = inspect(self.model)
-            load_relations = [rel.key for rel in mapper.relationships]
+            relations = [r.key for r in mapper.relationships]
 
-        if not load_relations:
+        if not relations:
             return instance
 
         stmt = select(self.model).filter_by(id=instance.id)
-
-        for rel in load_relations:
-            stmt = stmt.options(selectinload(getattr(self.model, rel)))
-
+        stmt = stmt.options(*self._build_relation_loaders(self.model, relations))
         result = await self.session.execute(stmt)
-        loaded_instance = result.scalar_one_or_none()
-
-        if loaded_instance is None:
-            raise NotFoundException(
-                message="Object saved but could not be retrieved with relationships",
-                status=404,
-                code="0001",
-            )
-
-        return loaded_instance
+        loaded = result.scalar_one_or_none()
+        if loaded is None:
+            raise NotFoundException("Could not reload after save", 404, "0001")
+        return loaded
 
     @with_transaction_error_handling
     async def update(self, instance: ModelType, **fields):
@@ -463,19 +427,12 @@ class BaseManager(Generic[ModelType]):
         self._reset_state()
         return result.rowcount
 
-    async def get(
-            self,
-            pk: Union[str, int, uuid.UUID],
-            load_relations: Optional[Sequence[str]] = None,
-    ):
+    async def get(self, pk: Union[str, int, uuid.UUID], relations: Optional[Sequence[str]] = None) -> Any:
         stmt = select(self.model).filter_by(id=pk)
-        if load_relations:
-            for rel in load_relations:
-                loader = (
-                    self._loader_from_path(rel) if "." in rel
-                    else selectinload(getattr(self.model, rel))
-                )
-                stmt = stmt.options(loader)
+        if relations:
+            opts = self._build_relation_loaders(self.model, relations)
+            stmt = stmt.options(*opts)
+
         result = await self.session.execute(stmt)
         instance = result.scalar_one_or_none()
         if instance is None:
@@ -527,13 +484,9 @@ class BaseManager(Generic[ModelType]):
 
         return self
 
-    def model_to_dict(self, instance: ModelType, exclude: set[str] | None = None):
+    def model_to_dict(self, instance: ModelType, exclude: set[str] = None) -> dict:
         exclude = exclude or set()
-        return {
-            col.key: getattr(instance, col.key)
-            for col in inspect(instance).mapper.column_attrs
-            if col.key not in exclude
-        }
+        return {k: getattr(instance, k) for k in self._column_keys if k not in exclude}
 
     def _ensure_filtered(self):
         if not self._filtered:
