@@ -89,6 +89,9 @@ class BaseManager(Generic[ModelType]):
         self._order_by: List[Any] = []
         self._joins: set[str] = set()
 
+        mapper = inspect(self.model)
+        self._column_keys = [c.key for c in mapper.mapper.column_attrs]
+
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
             await self.session.commit()
