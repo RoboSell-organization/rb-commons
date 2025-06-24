@@ -335,9 +335,14 @@ class BaseManager(Generic[ModelType]):
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
 
-    async def paginate(self, limit: int = 10, offset: int = 0):
+    async def paginate(self, limit: int = 10, offset: int = 0, relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
+
+        if relations:
+            opts = self._build_relation_loaders(self.model, relations)
+            stmt = stmt.options(*opts)
+
         if self._order_by:
             stmt = stmt.order_by(*self._order_by)
         stmt = stmt.limit(limit).offset(offset)
