@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable
 from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_, asc
@@ -250,19 +251,58 @@ class BaseManager(Generic[ModelType]):
         self._limit = value
         return self
 
-    def _build_relation_loaders(self, model: Any, relations: Sequence[str]) -> List[Load]:
+    def _build_relation_loaders(
+            self,
+            model: Any,
+            relations: Sequence[str] | None = None
+    ) -> List[Load]:
         """
-            Turn ['cat','product__tags'] into
-            [selectinload(model.cat),
-             selectinload(model.product).selectinload('tags')]
+        Given e.g. ["media", "properties.property", "properties__property"],
+        returns [
+            selectinload(Product.media),
+            selectinload(Product.properties).selectinload(Property.property)
+        ].
+
+        If `relations` is None or empty, recurse *all* relationships once (cycle-safe).
         """
         loaders: List[Load] = []
-        for path in relations:
-            parts = path.split("__")
-            loader = selectinload(getattr(model, parts[0]))
-            for sub in parts[1:]:
-                loader = loader.selectinload(sub)
-            loaders.append(loader)
+
+        if relations:
+            for path in relations:
+                parts = re.split(r"\.|\_\_", path)
+                current_model = model
+                loader: Load | None = None
+
+                for part in parts:
+                    attr = getattr(current_model, part, None)
+                    if attr is None or not hasattr(attr, "property"):
+                        raise ValueError(f"Invalid relationship path: {path!r}")
+                    loader = selectinload(attr) if loader is None else loader.selectinload(attr)
+                    current_model = attr.property.mapper.class_
+
+                loaders.append(loader)
+
+            return loaders
+
+        visited = set()
+
+        def recurse(curr_model: Any, curr_loader: Load | None = None):
+            mapper = inspect(curr_model)
+            if mapper in visited:
+                return
+            visited.add(mapper)
+
+            for rel in mapper.relationships:
+                attr = getattr(curr_model, rel.key)
+                loader = (
+                    selectinload(attr)
+                    if curr_loader is None
+                    else curr_loader.selectinload(attr)
+                )
+                loaders.append(loader)
+                recurse(rel.mapper.class_, loader)
+
+        recurse(model)
         return loaders
 
     async def _execute_query(self, stmt):
