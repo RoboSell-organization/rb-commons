@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable
-from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_, asc
+from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_, asc, true
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, selectinload, RelationshipProperty, Load
@@ -151,9 +151,13 @@ class BaseManager(Generic[ModelType]):
     def _parse_lookup(self, lookup: str, value: Any):
         parts, operator, rel_attr, col_attr = self._parse_lookup_meta(lookup)
         expr = self._build_comparison(col_attr, operator, value)
+
         if rel_attr:
-            prop = rel_attr.property
-            return prop.uselist and rel_attr.any(expr) or rel_attr.has(expr)
+            if rel_attr.property.uselist:
+                return rel_attr.any(expr)
+            else:
+                return rel_attr.has(expr)
+
         return expr
 
     def _q_to_expr(self, q: Union[Q, QJSON]):
@@ -163,11 +167,14 @@ class BaseManager(Generic[ModelType]):
         clauses: List[Any] = [self._parse_lookup(k, v) for k, v in q.lookups.items()]
         for child in q.children:
             clauses.append(self._q_to_expr(child))
-        combined = (
-            True
-            if not clauses
-            else (or_(*clauses) if q._operator == "OR" else and_(*clauses))
-        )
+
+        if not clauses:
+            combined = true()
+        elif q._operator == "OR":
+            combined = or_(*clauses)
+        else:
+            combined = and_(*clauses)
+
         return ~combined if q.negated else combined
 
     def _parse_qjson(self, qjson: QJSON):
