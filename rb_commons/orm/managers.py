@@ -254,6 +254,49 @@ class BaseManager(Generic[ModelType]):
             self.filters.append(or_(*or_clauses))
         return self
 
+    def exclude(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
+        """
+        Exclude records that match the given conditions.
+        This is the opposite of filter() - it adds NOT conditions.
+
+        Args:
+            *expressions: Q objects, QJSON objects, or SQLAlchemy expressions
+            **lookups: Field lookups (same format as filter())
+
+        Returns:
+            BaseManager instance for method chaining
+
+        Example:
+            # Exclude users with specific names
+            manager.exclude(name="John", email__contains="test")
+
+            # Exclude using Q objects
+            manager.exclude(Q(age__lt=18) | Q(status="inactive"))
+
+            # Exclude using QJSON
+            manager.exclude(QJSON("metadata", "type", "eq", "archived"))
+        """
+        self._filtered = True
+
+        for k, v in lookups.items():
+            root = k.split("__", 1)[0]
+            if hasattr(self.model, root):
+                attr = getattr(self.model, root)
+                if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
+                    self._joins.add(root)
+
+            lookup_expr = self._parse_lookup(k, v)
+            self.filters.append(~lookup_expr)
+
+        for expr in expressions:
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                q_expr = self._q_to_expr(expr)
+                self.filters.append(~q_expr)
+            else:
+                self.filters.append(~expr)
+
+        return self
+
     def limit(self, value: int) -> "BaseManager[ModelType]":
         self._limit = value
         return self
