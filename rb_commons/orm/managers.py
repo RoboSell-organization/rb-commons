@@ -10,7 +10,7 @@ from sqlalchemy.orm import declarative_base, selectinload, RelationshipProperty,
 from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
 from functools import lru_cache, wraps
-from querysets import Q, QJSON
+from rb_commons.orm.querysets import Q, QJSON
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
 
