@@ -423,6 +423,7 @@ class BaseManager(Generic[ModelType]):
             stmt = stmt.where(and_(*self.filters))
 
         result = await self.session.execute(stmt)
+        self._reset_state()
         return int(result.scalar_one())
 
     async def paginate(self, limit: int = 10, offset: int = 0, relations: Optional[Sequence[str]] = None):
@@ -546,6 +547,7 @@ class BaseManager(Generic[ModelType]):
             .limit(1)
         )
         result = await self.session.execute(stmt)
+        self._reset_state()
         return result.scalars().first() is not None
 
     def has_relation(self, relation_name: str):
