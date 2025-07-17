@@ -2,67 +2,17 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable
+from typing import TypeVar, Type, Generic, Optional, List, Dict, Literal, Union, Sequence, Any, Iterable, Callable
 from sqlalchemy import select, delete, update, and_, func, desc, inspect, or_, asc, true
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import declarative_base, selectinload, RelationshipProperty, Load
 from rb_commons.http.exceptions import NotFoundException
 from rb_commons.orm.exceptions import DatabaseException, InternalException
-from functools import lru_cache
-
+from functools import lru_cache, wraps
+from querysets import Q, QJSON
 
 ModelType = TypeVar('ModelType', bound=declarative_base())
-
-class QJSON:
-    def __init__(self, field: str, key: str, operator: str, value: Any):
-        self.field = field
-        self.key = key
-        self.operator = operator
-        self.value = value
-
-    def __repr__(self):
-        return f"QJSON(field={self.field}, key={self.key}, op={self.operator}, value={self.value})"
-
-class Q:
-    """Boolean logic container that can be combined with `&`, `|`, and `~`."""
-
-    def __init__(self, **lookups: Any) -> None:
-        self.lookups: Dict[str, Any] = lookups
-        self.children: List[Q] = []
-        self._operator: str = "AND"
-        self.negated: bool = False
-
-    def _combine(self, other: "Q", operator: str) -> "Q":
-        combined = Q()
-        combined.children = [self, other]
-        combined._operator = operator
-        return combined
-
-    def __or__(self, other: "Q") -> "Q":
-        return self._combine(other, "OR")
-
-    def __and__(self, other: "Q") -> "Q":
-        return self._combine(other, "AND")
-
-    def __invert__(self) -> "Q":
-        clone = Q()
-        clone.lookups = self.lookups.copy()
-        clone.children = list(self.children)
-        clone._operator = self._operator
-        clone.negated = not self.negated
-        return clone
-
-    def __repr__(self) -> str:
-        if self.lookups:
-            base = f"Q({self.lookups})"
-        else:
-            base = "Q()"
-        if self.children:
-            base += f" {self._operator} {self.children}"
-        if self.negated:
-            base = f"NOT({base})"
-        return base
 
 def with_transaction_error_handling(func):
     async def wrapper(self, *args, **kwargs):
@@ -79,6 +29,20 @@ def with_transaction_error_handling(func):
             raise InternalException(f"Unexpected error: {str(e)}") from e
     return wrapper
 
+F = TypeVar("F", bound=Callable[..., Any])
+
+def query_mutator(func: F) -> F:
+    """
+    Make a query‑builder method clone‑on‑write without touching its body.
+    """
+    @wraps(func)
+    def wrapper(self: "BaseManager[Any]", *args, **kwargs):
+        clone = self._clone()
+        result = func(clone, *args, **kwargs)
+        return result if result is not None else clone
+    return wrapper
+
+
 class BaseManager(Generic[ModelType]):
     model: Type[ModelType]
 
@@ -92,6 +56,18 @@ class BaseManager(Generic[ModelType]):
 
         mapper = inspect(self.model)
         self._column_keys = [c.key for c in mapper.mapper.column_attrs]
+
+    def _clone(self) -> "BaseManager[ModelType]":
+        """
+        Shallow‑copy all mutable query state into a new manager instance.
+        """
+        clone = self.__class__(self.session)
+        clone.filters = list(self.filters)
+        clone._order_by = list(self._order_by)
+        clone._limit = self._limit
+        clone._joins = set(self._joins)
+        clone._filtered = self._filtered
+        return clone
 
     async def _smart_commit(self, instance: Optional[ModelType] = None) -> Optional[ModelType]:
         if not self.session.in_transaction():
@@ -200,107 +176,6 @@ class BaseManager(Generic[ModelType]):
             return json_expr.in_(qjson.value)
         raise ValueError(f"Unsupported QJSON operator: {qjson.operator}")
 
-    def order_by(self, *columns: Any):
-        """Collect ORDER BY clauses.
-        """
-        for col in columns:
-            if isinstance(col, str):
-                descending = col.startswith("-")
-                field_name = col.lstrip("+-")
-                sa_col = getattr(self.model, field_name, None)
-                if sa_col is None:
-                    raise ValueError(f"Invalid order_by field '{field_name}' for {self.model.__name__}")
-                self._order_by.append(sa_col.desc() if descending else sa_col.asc())
-            else:
-                self._order_by.append(col)
-
-        return self
-
-    def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager":
-        self._filtered = True
-
-        for k, v in lookups.items():
-            root = k.split("__", 1)[0]
-            if hasattr(self.model, root):
-                attr = getattr(self.model, root)
-                if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
-                    self._joins.add(root)
-
-            self.filters.append(self._parse_lookup(k, v))
-
-        for expr in expressions:
-            if isinstance(expr, Q) or isinstance(expr, QJSON):
-                self.filters.append(self._q_to_expr(expr))
-            else:
-                self.filters.append(expr)
-
-        return self
-
-    def or_filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
-        """Add one OR group (shortcut for `filter(Q() | Q())`)."""
-
-        or_clauses: List[Any] = []
-        for expr in expressions:
-            if isinstance(expr, Q) or isinstance(expr, QJSON):
-                or_clauses.append(self._q_to_expr(expr))
-            else:
-                or_clauses.append(expr)
-
-        for k, v in lookups.items():
-            or_clauses.append(self._parse_lookup(k, v))
-
-        if or_clauses:
-            self._filtered = True
-            self.filters.append(or_(*or_clauses))
-        return self
-
-    def exclude(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
-        """
-        Exclude records that match the given conditions.
-        This is the opposite of filter() - it adds NOT conditions.
-
-        Args:
-            *expressions: Q objects, QJSON objects, or SQLAlchemy expressions
-            **lookups: Field lookups (same format as filter())
-
-        Returns:
-            BaseManager instance for method chaining
-
-        Example:
-            # Exclude users with specific names
-            manager.exclude(name="John", email__contains="test")
-
-            # Exclude using Q objects
-            manager.exclude(Q(age__lt=18) | Q(status="inactive"))
-
-            # Exclude using QJSON
-            manager.exclude(QJSON("metadata", "type", "eq", "archived"))
-        """
-        self._filtered = True
-
-        for k, v in lookups.items():
-            root = k.split("__", 1)[0]
-            if hasattr(self.model, root):
-                attr = getattr(self.model, root)
-                if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
-                    self._joins.add(root)
-
-            lookup_expr = self._parse_lookup(k, v)
-            self.filters.append(~lookup_expr)
-
-        for expr in expressions:
-            if isinstance(expr, Q) or isinstance(expr, QJSON):
-                q_expr = self._q_to_expr(expr)
-                self.filters.append(~q_expr)
-            else:
-                self.filters.append(~expr)
-
-        return self
-
-    def limit(self, value: int) -> "BaseManager[ModelType]":
-        self._limit = value
-        return self
-
     def _build_relation_loaders(
             self,
             model: Any,
@@ -360,11 +235,111 @@ class BaseManager(Generic[ModelType]):
         rows = result.scalars().all()
         return list({obj.id: obj for obj in rows}.values())
 
-    def _reset_state(self):
-        self.filters.clear()
-        self._filtered = False
-        self._limit = None
-        self._joins.clear()
+    @query_mutator
+    def order_by(self, *columns: Any):
+        """Collect ORDER BY clauses.
+        """
+        for col in columns:
+            if isinstance(col, str):
+                descending = col.startswith("-")
+                field_name = col.lstrip("+-")
+                sa_col = getattr(self.model, field_name, None)
+                if sa_col is None:
+                    raise ValueError(f"Invalid order_by field '{field_name}' for {self.model.__name__}")
+                self._order_by.append(sa_col.desc() if descending else sa_col.asc())
+            else:
+                self._order_by.append(col)
+
+        return self
+
+    @query_mutator
+    def filter(self, *expressions: Any, **lookups: Any) -> "BaseManager":
+        self._filtered = True
+
+        for k, v in lookups.items():
+            root = k.split("__", 1)[0]
+            if hasattr(self.model, root):
+                attr = getattr(self.model, root)
+                if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
+                    self._joins.add(root)
+
+            self.filters.append(self._parse_lookup(k, v))
+
+        for expr in expressions:
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                self.filters.append(self._q_to_expr(expr))
+            else:
+                self.filters.append(expr)
+
+        return self
+
+    @query_mutator
+    def or_filter(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
+        """Add one OR group (shortcut for `filter(Q() | Q())`)."""
+
+        or_clauses: List[Any] = []
+        for expr in expressions:
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                or_clauses.append(self._q_to_expr(expr))
+            else:
+                or_clauses.append(expr)
+
+        for k, v in lookups.items():
+            or_clauses.append(self._parse_lookup(k, v))
+
+        if or_clauses:
+            self._filtered = True
+            self.filters.append(or_(*or_clauses))
+        return self
+
+    @query_mutator
+    def exclude(self, *expressions: Any, **lookups: Any) -> "BaseManager[ModelType]":
+        """
+        Exclude records that match the given conditions.
+        This is the opposite of filter() - it adds NOT conditions.
+
+        Args:
+            *expressions: Q objects, QJSON objects, or SQLAlchemy expressions
+            **lookups: Field lookups (same format as filter())
+
+        Returns:
+            BaseManager instance for method chaining
+
+        Example:
+            # Exclude users with specific names
+            manager.exclude(name="John", email__contains="test")
+
+            # Exclude using Q objects
+            manager.exclude(Q(age__lt=18) | Q(status="inactive"))
+
+            # Exclude using QJSON
+            manager.exclude(QJSON("metadata", "type", "eq", "archived"))
+        """
+        self._filtered = True
+
+        for k, v in lookups.items():
+            root = k.split("__", 1)[0]
+            if hasattr(self.model, root):
+                attr = getattr(self.model, root)
+                if hasattr(attr, "property") and isinstance(attr.property, RelationshipProperty):
+                    self._joins.add(root)
+
+            lookup_expr = self._parse_lookup(k, v)
+            self.filters.append(~lookup_expr)
+
+        for expr in expressions:
+            if isinstance(expr, Q) or isinstance(expr, QJSON):
+                q_expr = self._q_to_expr(expr)
+                self.filters.append(~q_expr)
+            else:
+                self.filters.append(~expr)
+
+        return self
+
+    @query_mutator
+    def limit(self, value: int) -> "BaseManager[ModelType]":
+        self._limit = value
+        return self
 
     async def all(self, relations: Optional[List[str]] = None):
         stmt = select(self.model)
@@ -380,10 +355,7 @@ class BaseManager(Generic[ModelType]):
         if self._limit:
             stmt = stmt.limit(self._limit)
 
-        try:
-            return await self._execute_query(stmt)
-        finally:
-            self._reset_state()
+        return await self._execute_query(stmt)
 
     async def first(self, relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
@@ -397,22 +369,19 @@ class BaseManager(Generic[ModelType]):
             stmt = stmt.options(*opts)
 
         result = await self.session.execute(stmt)
-        self._reset_state()
         return result.scalars().first()
-
 
     async def last(self, relations: Optional[Sequence[str]] = None):
         self._ensure_filtered()
         stmt = select(self.model).filter(and_(*self.filters))
         order = self._order_by or [self.model.id.desc()]
-        stmt = stmt.order_by(*order[::-1])  # reverse for last
+        stmt = stmt.order_by(*order[::-1])
 
         if relations:
             opts = self._build_relation_loaders(self.model, relations)
             stmt = stmt.options(*opts)
 
         result = await self.session.execute(stmt)
-        self._reset_state()
         return result.scalars().first()
 
     async def count(self) -> int | None:
@@ -423,7 +392,6 @@ class BaseManager(Generic[ModelType]):
             stmt = stmt.where(and_(*self.filters))
 
         result = await self.session.execute(stmt)
-        self._reset_state()
         return int(result.scalar_one())
 
     async def paginate(self, limit: int = 10, offset: int = 0, relations: Optional[Sequence[str]] = None):
@@ -437,10 +405,7 @@ class BaseManager(Generic[ModelType]):
         if self._order_by:
             stmt = stmt.order_by(*self._order_by)
         stmt = stmt.limit(limit).offset(offset)
-        try:
-            return await self._execute_query(stmt)
-        finally:
-            self._reset_state()
+        return await self._execute_query(stmt)
 
     @with_transaction_error_handling
     async def create(self, **kwargs):
@@ -505,7 +470,6 @@ class BaseManager(Generic[ModelType]):
         stmt = delete(self.model).where(and_(*self.filters))
         await self.session.execute(stmt)
         await self.session.commit()
-        self._reset_state()
         return True
 
     @with_transaction_error_handling
@@ -523,7 +487,6 @@ class BaseManager(Generic[ModelType]):
         stmt = delete(self.model).where(and_(*self.filters))
         result = await self.session.execute(stmt)
         await self._smart_commit()
-        self._reset_state()
         return result.rowcount
 
     async def get(self, pk: Union[str, int, uuid.UUID], relations: Optional[Sequence[str]] = None) -> Any:
@@ -547,9 +510,9 @@ class BaseManager(Generic[ModelType]):
             .limit(1)
         )
         result = await self.session.execute(stmt)
-        self._reset_state()
         return result.scalars().first() is not None
 
+    @query_mutator
     def has_relation(self, relation_name: str):
         relationship = getattr(self.model, relation_name)
         subquery = (
@@ -562,6 +525,7 @@ class BaseManager(Generic[ModelType]):
         self._filtered = True
         return self
 
+    @query_mutator
     def sort_by(self, tokens: Sequence[str]) -> "BaseManager[ModelType]":
         """
         Dynamically apply ORDER BY clauses based on a list of "field" or "-field" tokens.
