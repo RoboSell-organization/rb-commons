@@ -7,6 +7,7 @@ from rb_commons.orm.enum import MediaSource
 class MediaUtils:
     BILLZ_S3_ENDPOINT_URL = "https://cdn-grocery.billz.ai/billz"
     BITTO_S3_ENDPOINT_URL = "https://api.bito.uz/upload-api/public/uploads"
+    EURO_PHARM_S3_ENDPOINT_URL = "https://api.europharm.uz/images/click_webp"
 
     @classmethod
     def url_builder(cls, key: str, source: Optional[MediaSource] = MediaSource.ROBO):
@@ -27,5 +28,7 @@ class MediaUtils:
             media_url = f"{cls.BILLZ_S3_ENDPOINT_URL}/{key}"
         elif source == MediaSource.BITO:
             media_url = f"{cls.BITTO_S3_ENDPOINT_URL}/{key}"
+        elif source == MediaSource.EUROPHARM:
+            media_url = f"{cls.EURO_PHARM_S3_ENDPOINT_URL}/{key}"
 
         return media_url
