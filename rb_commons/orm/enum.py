@@ -10,3 +10,4 @@ class MediaSource(str, Enum):
     ROBO = "ROBO"
     BILLZ = "BILLZ"
     BITO = "BITO"
+    EUROPHARM = "EUROPHARM"
