@@ -5,6 +5,9 @@ class OriginType(str, Enum):
     ETL = "ETL"
     API = "API"
     DEFAULT = "DEFAULT"
+    BILLZ = "BILLZ"
+    BITO = "BITO"
+    SMARTUP = "SMARTUP"
 
 class MediaSource(str, Enum):
     ROBO = "ROBO"
