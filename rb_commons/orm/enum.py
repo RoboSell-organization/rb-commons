@@ -8,9 +8,11 @@ class OriginType(str, Enum):
     BILLZ = "BILLZ"
     BITO = "BITO"
     SMARTUP = "SMARTUP"
+    DIZGO = "DIZGO"
 
 class MediaSource(str, Enum):
     ROBO = "ROBO"
     BILLZ = "BILLZ"
     BITO = "BITO"
     EUROPHARM = "EUROPHARM"
+    DIZGO = "DIZGO"
