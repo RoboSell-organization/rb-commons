@@ -43,6 +43,16 @@ def query_mutator(func: F) -> F:
     return wrapper
 
 
+AGG_MAP: dict[str, Callable[[Any], Any]] = {
+    "sum": func.sum,
+    "avg": func.avg,
+    "mean": func.avg,
+    "min": func.min,
+    "max": func.max,
+    "count": func.count,
+    "first": lambda c: c,
+}
+
 class BaseManager(Generic[ModelType]):
     model: Type[ModelType]
 
@@ -525,27 +535,116 @@ class BaseManager(Generic[ModelType]):
         self._filtered = True
         return self
 
-    @query_mutator
-    def sort_by(self, tokens: Sequence[str]) -> "BaseManager[ModelType]":
+    def _infer_default_agg(self, column) -> str:
+        try:
+            from sqlalchemy import Integer, BigInteger, SmallInteger, Float, Numeric
+            if hasattr(column, "type") and isinstance(column.type, (Integer, BigInteger, SmallInteger, Float, Numeric)):
+                return "sum"
+        except Exception:
+            pass
+        return "max"
+    def _order_expr_for_path(self, token: str):
         """
-        Dynamically apply ORDER BY clauses based on a list of "field" or "-field" tokens.
-        Unknown fields are collected for Python-side sorting later.
+        token grammar:
+          [-]<path>[:<agg>][!first|!last]
+            <path> := "field" | "relation__field" (one hop)
+            <agg>  := sum|avg|min|max|count|first  (required for uselist=True; optional otherwise)
+        Examples:
+          "category__title"
+          "-reviews__rating:avg!last"
+          "stocks__sold:sum"
         """
-        self._invalid_sort_tokens = []
-        self._order_by = []
-        model = self.model
 
-        for tok in tokens:
-            if not tok:
-                continue
+        # strip leading '-' (handled by caller), and parse nulls placement
+        core = token.lstrip("-")
+        nulls_placement = None
+        if core.endswith("!first"):
+            core, nulls_placement = core[:-6], "first"
+        elif core.endswith("!last"):
+            core, nulls_placement = core[:-5], "last"
+
+        # split aggregate suffix if present
+        if ":" in core:
+            path, agg_name = core.split(":", 1)
+            agg_name = agg_name.lower().strip()
+        else:
+            path, agg_name = core, None
+
+        # base column on the model (no relation hop)
+        if "__" not in path and "." not in path:
+            col = getattr(self.model, path, None)
+            if col is None:
+                raise ValueError(f"Invalid order_by field '{path}' for {self.model.__name__}")
+            expr = col
+            if nulls_placement == "first":
+                expr = expr.nullsfirst()
+            elif nulls_placement == "last":
+                expr = expr.nullslast()
+            return expr
+
+        # relation hop (exactly one)
+        parts = re.split(r"\.|\_\_", path)
+        if len(parts) != 2:
+            raise ValueError(f"Only one relation hop supported in order_by: {path!r}")
+
+        rel_name, col_name = parts
+        rel_attr = getattr(self.model, rel_name, None)
+        if rel_attr is None or not hasattr(rel_attr, "property"):
+            raise ValueError(f"Invalid relationship '{rel_name}' on {self.model.__name__}")
+
+        target_mapper = rel_attr.property.mapper
+        target_cls = target_mapper.class_
+        target_col = getattr(target_cls, col_name, None)
+        if target_col is None:
+            raise ValueError(f"Invalid column '{col_name}' on related model {target_cls.__name__}")
+
+        primaryjoin = rel_attr.property.primaryjoin
+        uselist = rel_attr.property.uselist
+
+        # One-to-many (or many-to-many via association): require aggregate (or infer)
+        if uselist:
+            agg_name = agg_name or self._infer_default_agg(target_col)
+            agg_fn = AGG_MAP.get(agg_name)
+            if agg_fn is None:
+                raise ValueError(f"Unsupported aggregate '{agg_name}' in order_by for {path!r}")
+
+            # SELECT agg(related.col) WHERE primaryjoin  (correlated)
+            subq = (
+                select(agg_fn(target_col))
+                .where(primaryjoin)
+                .correlate(self.model)  # tie to outer row
+                .scalar_subquery()
+            )
+            expr = subq
+
+        else:
+            if agg_name and agg_name != "first":
+                agg_fn = AGG_MAP.get(agg_name)
+                if agg_fn is None:
+                    raise ValueError(f"Unsupported aggregate '{agg_name}' in order_by for {path!r}")
+                select_expr = agg_fn(target_col)
+            else:
+                select_expr = target_col
+
+            sub = select(select_expr).where(primaryjoin).correlate(self.model)
+            if agg_name == "first":
+                sub = sub.limit(1)
+            expr = sub.scalar_subquery()
+
+        if nulls_placement == "first":
+            expr = expr.nullsfirst()
+        elif nulls_placement == "last":
+            expr = expr.nullslast()
+
+        return expr
+
+    @query_mutator
+    def sort_by(self, tokens):
+        self._order_by = []
+        for tok in tokens or []:
             direction = desc if tok.startswith("-") else asc
             name = tok.lstrip("-")
-            col = getattr(model, name, None)
-            if col is None:
-                self._invalid_sort_tokens.append(tok)
-                continue
-            self._order_by.append(direction(col))
-
+            self._order_by.append(direction(self._order_expr_for_path(name)))
         return self
 
     def model_to_dict(self, instance: ModelType, exclude: set[str] = None) -> dict:
