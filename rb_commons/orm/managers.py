@@ -136,6 +136,34 @@ class BaseManager(Generic[ModelType]):
 
     def _parse_lookup(self, lookup: str, value: Any):
         parts, operator, rel_attr, col_attr = self._parse_lookup_meta(lookup)
+
+        if rel_attr is not None and col_attr is None:
+            uselist = rel_attr.property.uselist
+            primaryjoin = rel_attr.property.primaryjoin
+
+            if uselist:
+                target_cls = rel_attr.property.mapper.class_
+                cnt = (
+                    select(func.count("*"))
+                    .select_from(target_cls)
+                    .where(primaryjoin)
+                    .correlate(self.model)
+                    .scalar_subquery()
+                )
+                return self._build_comparison(cnt, operator, value)
+            else:
+                exists_expr = (
+                    select(1)
+                    .where(primaryjoin)
+                    .correlate(self.model)
+                    .exists()
+                )
+                if operator in {"eq", "lte"} and str(value) in {"0", "False", "false"}:
+                    return ~exists_expr
+                if operator in {"gt", "gte", "eq"} and str(value) in {"1", "True", "true"}:
+                    return exists_expr
+                return self._build_comparison(exists_expr, operator, bool(value))
+
         expr = self._build_comparison(col_attr, operator, value)
 
         if rel_attr:
