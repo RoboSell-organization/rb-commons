@@ -30,5 +30,7 @@ class MediaUtils:
             media_url = f"{cls.BITTO_S3_ENDPOINT_URL}/{key}"
         elif source == MediaSource.EUROPHARM:
             media_url = f"{cls.EURO_PHARM_S3_ENDPOINT_URL}/{key}"
+        elif source == MediaSource.ETL:
+            media_url = key
 
         return media_url
