@@ -23,3 +23,4 @@ class MediaSource(str, Enum):
     YESPOS = "YESPOS"
     STORFOX = "STORFOX"
     ALI_POS = "ALI_POS"
+    ETL = "ETL"
