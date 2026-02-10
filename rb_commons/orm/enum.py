@@ -14,6 +14,7 @@ class OriginType(str, Enum):
     STORFOX = "STORFOX"
     ALI_POS = "ALI_POS"
     WOLT = "WOLT"
+    REGOS = "REGOS"
 
 class MediaSource(str, Enum):
     ROBO = "ROBO"
