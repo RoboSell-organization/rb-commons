@@ -27,3 +27,4 @@ class MediaSource(str, Enum):
     ALI_POS = "ALI_POS"
     ETL = "ETL"
     WOLT = "WOLT"
+    REGOS = "REGOS"
