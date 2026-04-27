@@ -5,7 +5,7 @@ from rb_commons.orm.enum import MediaSource
 
 
 class MediaUtils:
-    BILLZ_S3_ENDPOINT_URL = "https://cdn-grocery.billz.ai/billz"
+    BILLZ_S3_ENDPOINT_URL = "https://fra1.digitaloceanspaces.com/billz2-minio-billz"
     BITTO_S3_ENDPOINT_URL = "https://api.bito.uz/upload-api/public/uploads"
     EURO_PHARM_S3_ENDPOINT_URL = "https://api.europharm.uz/images/click_webp"
 
